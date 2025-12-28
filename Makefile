@@ -1,35 +1,30 @@
 .PHONY: build install uninstall clean clean-all rebuild test fmt vet
 
 # Binary name
-BINARY_NAME=$(shell basename $$(pwd))
-SRC_DIR=src
-BUILD_DIR=.
+BINARY_NAME=speech-to-text
+CMD_DIR=./cmd/speech-to-text
+BUILD_DIR=bin
 
 # Source files
-SOURCES=$(shell find $(SRC_DIR) -name '*.go')
+SOURCES=$(shell find cmd internal -name '*.go' 2>/dev/null)
 
 # Build target
 build: $(BUILD_DIR)/$(BINARY_NAME)
 
-rebuild: clean-all build
+rebuild: clean build
 
-$(BUILD_DIR)/$(BINARY_NAME): $(SOURCES) $(SRC_DIR)/go.sum
+$(BUILD_DIR)/$(BINARY_NAME): $(SOURCES) go.sum
+	@mkdir -p $(BUILD_DIR)
 	@echo "Building $(BINARY_NAME)..."
-	cd $(SRC_DIR) && go build -o ../$(BINARY_NAME) .
-	@echo "Build complete! Binary: $(BINARY_NAME)"
+	@go build -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
+	@echo "Build complete! Binary: $(BUILD_DIR)/$(BINARY_NAME)"
 
 # Generate go.sum
-$(SRC_DIR)/go.sum: $(SRC_DIR)/go.mod
+go.sum: go.mod
 	@echo "Downloading dependencies..."
-	@cd $(SRC_DIR) && go mod download
-	@cd $(SRC_DIR) && go mod tidy
-	@touch $(SRC_DIR)/go.sum
+	@go mod download
+	@go mod tidy
 	@echo "Dependencies downloaded"
-
-# Generate go.mod (only if it doesn't exist)
-$(SRC_DIR)/go.mod:
-	@echo "Initializing Go module..."
-	@cd $(SRC_DIR) && go mod init $(BINARY_NAME)
 
 
 # Install binary
@@ -67,30 +62,44 @@ uninstall:
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -f $(BUILD_DIR)/$(BINARY_NAME)
+	@rm -rf $(BUILD_DIR)
 	@echo "Clean complete!"
 
 clean-all: clean
-	@echo "Cleaning go.mod & go.sum"
-	@rm -f $(SRC_DIR)/go.mod $(SRC_DIR)/go.sum
+	@echo "Cleaning dependencies cache..."
+	@go clean -modcache
 	@echo "Clean complete!"
 
 # Run tests
 test:
 	@echo "Running tests..."
-	cd $(SRC_DIR) && go test -v ./...
+	@go test -v ./...
 
 # Format code
 fmt:
 	@echo "Formatting code..."
-	cd $(SRC_DIR) && go fmt ./...
+	@go fmt ./...
 	@echo "Format complete!"
 
 # Run go vet
 vet:
 	@echo "Running go vet..."
-	cd $(SRC_DIR) && go vet ./...
+	@go vet ./...
 	@echo "Vet complete!"
+
+# Run the application
+run:
+	@go run $(CMD_DIR) $(ARGS)
+
+# Build for multiple platforms
+build-all:
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building for all platforms..."
+	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(CMD_DIR)
+	@GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(CMD_DIR)
+	@GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(CMD_DIR)
+	@GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(CMD_DIR)
+	@echo "All builds complete in $(BUILD_DIR)/"
 
 # Run all checks (fmt, vet, test)
 check: fmt vet test
@@ -100,13 +109,15 @@ check: fmt vet test
 help:
 	@echo "Available targets:"
 	@echo "  build      - Build the binary"
-	@echo "  rebuild    - Clean all and rebuild from scratch"
+	@echo "  rebuild    - Clean and rebuild from scratch"
 	@echo "  install    - Build and install to /usr/local/bin (or TARGET env variable)"
 	@echo "  uninstall  - Remove installed binary"
 	@echo "  clean      - Remove build artifacts"
-	@echo "  clean-all  - Remove build artifacts, go.mod, and go.sum"
+	@echo "  clean-all  - Remove build artifacts and clean module cache"
 	@echo "  test       - Run tests"
 	@echo "  fmt        - Format code"
 	@echo "  vet        - Run go vet"
+	@echo "  run        - Run the application (use ARGS to pass arguments)"
+	@echo "  build-all  - Build for all platforms (linux, darwin, windows)"
 	@echo "  check      - Run fmt, vet, and test"
 	@echo "  help       - Show this help message"

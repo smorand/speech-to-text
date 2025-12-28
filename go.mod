@@ -1,4 +1,4 @@
-module src
+module speech-to-text
 
 go 1.25.4
 

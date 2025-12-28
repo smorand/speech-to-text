@@ -40,13 +40,10 @@ sudo apt-get install ffmpeg
 
 ```bash
 # Clone or navigate to the project directory
-cd speech-to-text-go
+cd speech-to-text
 
 # Build using Makefile (recommended)
 make build
-
-# Or use the build script
-./build.sh
 ```
 
 This will:
@@ -117,29 +114,29 @@ GCP_LOCATION=global
 
 ```bash
 # Transcribe and display in terminal
-./speech-to-text path/to/audio/file.mp3
+bin/speech-to-text path/to/audio/file.mp3
 
 # Save meeting minutes to markdown file
-./speech-to-text audio.mp3 -o minutes.md
+bin/speech-to-text audio.mp3 -o minutes.md
 
 # Specify custom meeting name
-./speech-to-text audio.mp3 -o minutes.md -m "Weekly Team Sync"
+bin/speech-to-text audio.mp3 -o minutes.md -m "Weekly Team Sync"
 ```
 
 ### Advanced Usage
 
 ```bash
 # Use different Gemini model
-./speech-to-text audio.mp3 --model gemini-2.0-flash-exp
+bin/speech-to-text audio.mp3 --model gemini-2.0-flash-exp
 
 # Specify project explicitly
-./speech-to-text audio.mp3 --project my-gcp-project
+bin/speech-to-text audio.mp3 --project my-gcp-project
 
 # Custom meeting name with output file
-./speech-to-text recording.ogg -o meeting.md -m "Q4 Planning Session"
+bin/speech-to-text recording.ogg -o meeting.md -m "Q4 Planning Session"
 
 # Different GCP location
-./speech-to-text audio.mp3 --location us-central1
+bin/speech-to-text audio.mp3 --location us-central1
 ```
 
 ### Command-Line Options
