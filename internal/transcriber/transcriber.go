@@ -28,7 +28,7 @@ type Config struct {
 	ChunkDurationMinutes int // Duration of each chunk in minutes (default: 20)
 	OverlapSeconds       int // Overlap duration in seconds before/after each chunk (default: 5)
 	MaxParallelWorkers   int // Maximum number of parallel transcription workers (default: 4)
-	MaxRetries           int // Maximum number of API retry attempts (default: 3)
+	MaxRetries           int // Maximum number of API retry attempts (default: 6)
 	RequestTimeout       int // API request timeout in seconds (default: 1200 = 20 minutes)
 }
 
@@ -456,7 +456,7 @@ func extractTextFromResponse(resp *genai.GenerateContentResponse) string {
 func (t *Transcriber) retryWithBackoff(ctx context.Context, operation string, fn func() error) error {
 	maxRetries := t.config.MaxRetries
 	if maxRetries <= 0 {
-		maxRetries = 3 // default
+		maxRetries = 6 // default
 	}
 
 	var lastErr error

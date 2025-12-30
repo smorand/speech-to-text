@@ -73,7 +73,7 @@ func parseFlags() (transcriber.Config, string) {
 		apiKey        = flag.String("api-key", os.Getenv("GEMINI_API_KEY"), "Gemini API key (for non-Vertex AI)")
 		chunkDuration = flag.Int("chunk-duration", 20, "Duration of each chunk in minutes")
 		location      = flag.String("location", getEnvDefault("GCP_LOCATION", "global"), "GCP location (Vertex AI only)")
-		maxRetries    = flag.Int("max-retries", 3, "Maximum number of API retry attempts")
+		maxRetries    = flag.Int("max-retries", 6, "Maximum number of API retry attempts")
 		meetingName   = flag.String("m", "", "Meeting name for the title")
 		modelName     = flag.String("model", "gemini-2.5-flash", "Gemini model name")
 		output        = flag.String("o", "", "Output file path (markdown format)")
