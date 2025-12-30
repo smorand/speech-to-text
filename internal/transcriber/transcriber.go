@@ -19,13 +19,15 @@ const (
 
 // Config holds configuration for the transcriber
 type Config struct {
+	APIKey      string
 	Location    string
 	MeetingName string
 	ModelName   string
 	ProjectID   string
+	UseVertexAI bool
 }
 
-// Transcriber handles audio transcription using Vertex AI
+// Transcriber handles audio transcription using Vertex AI or Gemini API
 type Transcriber struct {
 	client       *genai.Client
 	config       Config
@@ -35,13 +37,37 @@ type Transcriber struct {
 
 // New creates a new Transcriber instance
 func New(ctx context.Context, cfg Config, logFn func(string)) (*Transcriber, error) {
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		Backend:  genai.BackendVertexAI,
-		Location: cfg.Location,
-		Project:  cfg.ProjectID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GenAI client: %w", err)
+	var client *genai.Client
+	var err error
+
+	if cfg.UseVertexAI {
+		// Use Vertex AI backend
+		client, err = genai.NewClient(ctx, &genai.ClientConfig{
+			Backend:  genai.BackendVertexAI,
+			Location: cfg.Location,
+			Project:  cfg.ProjectID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Vertex AI client: %w", err)
+		}
+		if logFn != nil {
+			logFn("Using Vertex AI backend")
+		}
+	} else {
+		// Use Gemini API backend
+		if cfg.APIKey == "" {
+			return nil, fmt.Errorf("GEMINI_API_KEY is required when GEMINI_USE_VERTEX_AI is false")
+		}
+		client, err = genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey: cfg.APIKey,
+			// Backend defaults to BackendGeminiAPI when not set to BackendVertexAI
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini API client: %w", err)
+		}
+		if logFn != nil {
+			logFn("Using Gemini API backend (generativelanguage.googleapis.com)")
+		}
 	}
 
 	return &Transcriber{

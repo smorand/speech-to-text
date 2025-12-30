@@ -160,28 +160,40 @@ bin/speech-to-text test.mp3 --model gemini-2.0-flash-exp
 
 ## Environment Configuration
 
-### Required Variables
+The tool supports two backends: **Vertex AI** (default) and **Gemini API**.
 
+### Backend Selection
+
+- `GEMINI_USE_VERTEX_AI`: Set to `true` for Vertex AI, `false` for Gemini API (default: `true` if not set)
+
+### Vertex AI Backend (GEMINI_USE_VERTEX_AI=true)
+
+**Required Variables:**
 - `GCP_PROJECT`: GCP project ID with Vertex AI enabled
 
-### Optional Variables
+**Optional Variables:**
+- `GCP_LOCATION`: GCP region (default: `global`)
 
-- `GCP_LOCATION`: GCP region (default: global)
-
-## GCP Integration
-
-### Required GCP Setup
-
+**Setup Requirements:**
 1. **Vertex AI API**: Must be enabled in the project
 2. **Authentication**: Application Default Credentials or service account
 3. **Permissions**: `aiplatform.endpoints.predict` or equivalent
 4. **Billing**: Active billing account (API usage costs apply)
 
-### Authentication Methods
-
+**Authentication Methods:**
 1. **Standard Account**: `gcloud auth application-default login`
 2. **ADM Account** (for sensitive ops): Use impersonation
 3. **Service Account**: Set `GOOGLE_APPLICATION_CREDENTIALS` env var
+
+### Gemini API Backend (GEMINI_USE_VERTEX_AI=false)
+
+**Required Variables:**
+- `GEMINI_API_KEY`: Your Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+
+**Setup Requirements:**
+1. **API Key**: Get from Google AI Studio (makersuite.google.com)
+2. **No GCP Project Required**: Works with just an API key
+3. **Billing**: Usage billed through Google AI Studio
 
 ## AI Assistance Context
 
