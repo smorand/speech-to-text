@@ -87,7 +87,11 @@ func parseFlags() (transcriber.Config, string) {
 
 	if len(flag.Args()) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: audio file path is required\n")
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <audio-file>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nUsage: %s [options] <audio-file>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nIMPORTANT: Options must come BEFORE the audio file path\n")
+		fmt.Fprintf(os.Stderr, "\nExample:\n")
+		fmt.Fprintf(os.Stderr, "  %s -o output.md audio.ogg\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nOptions:\n")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
