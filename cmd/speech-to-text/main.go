@@ -70,12 +70,17 @@ func logStep(message string) {
 // parseFlags parses command-line flags and returns configuration
 func parseFlags() (transcriber.Config, string) {
 	var (
-		apiKey      = flag.String("api-key", os.Getenv("GEMINI_API_KEY"), "Gemini API key (for non-Vertex AI)")
-		location    = flag.String("location", getEnvDefault("GCP_LOCATION", "global"), "GCP location (Vertex AI only)")
-		meetingName = flag.String("m", "", "Meeting name for the title")
-		modelName   = flag.String("model", "gemini-2.5-flash", "Gemini model name")
-		output      = flag.String("o", "", "Output file path (markdown format)")
-		projectID   = flag.String("project", "", "GCP project ID (Vertex AI only)")
+		apiKey        = flag.String("api-key", os.Getenv("GEMINI_API_KEY"), "Gemini API key (for non-Vertex AI)")
+		chunkDuration = flag.Int("chunk-duration", 20, "Duration of each chunk in minutes")
+		location      = flag.String("location", getEnvDefault("GCP_LOCATION", "global"), "GCP location (Vertex AI only)")
+		maxRetries    = flag.Int("max-retries", 3, "Maximum number of API retry attempts")
+		meetingName   = flag.String("m", "", "Meeting name for the title")
+		modelName     = flag.String("model", "gemini-2.5-flash", "Gemini model name")
+		output        = flag.String("o", "", "Output file path (markdown format)")
+		overlap       = flag.Int("overlap", 1, "Overlap duration in minutes before/after each chunk")
+		parallel      = flag.Int("parallel", 4, "Maximum number of parallel transcription workers")
+		projectID     = flag.String("project", "", "GCP project ID (Vertex AI only)")
+		timeout       = flag.Int("timeout", 1200, "API request timeout in seconds (default: 1200 = 20 minutes)")
 	)
 
 	flag.Parse()
@@ -87,13 +92,39 @@ func parseFlags() (transcriber.Config, string) {
 		os.Exit(1)
 	}
 
-	// Determine if we should use Vertex AI
-	useVertexAI := true
+	// Validate chunk parameters
+	if *chunkDuration < 1 {
+		fmt.Fprintf(os.Stderr, "Error: chunk-duration must be at least 1 minute\n")
+		os.Exit(1)
+	}
+	if *overlap < 0 {
+		fmt.Fprintf(os.Stderr, "Error: overlap cannot be negative\n")
+		os.Exit(1)
+	}
+	if *overlap >= *chunkDuration {
+		fmt.Fprintf(os.Stderr, "Error: overlap must be less than chunk-duration\n")
+		os.Exit(1)
+	}
+	if *parallel < 1 {
+		fmt.Fprintf(os.Stderr, "Error: parallel workers must be at least 1\n")
+		os.Exit(1)
+	}
+	if *maxRetries < 0 {
+		fmt.Fprintf(os.Stderr, "Error: max-retries cannot be negative\n")
+		os.Exit(1)
+	}
+	if *timeout < 10 {
+		fmt.Fprintf(os.Stderr, "Error: timeout must be at least 10 seconds\n")
+		os.Exit(1)
+	}
+
+	// Determine if we should use Vertex AI (default: false, use Gemini API)
+	useVertexAI := false
 	if envValue := os.Getenv("GEMINI_USE_VERTEX_AI"); envValue != "" {
 		var err error
 		useVertexAI, err = strconv.ParseBool(envValue)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Invalid GEMINI_USE_VERTEX_AI value '%s', defaulting to false\n", envValue)
+			fmt.Fprintf(os.Stderr, "Warning: Invalid GEMINI_USE_VERTEX_AI value '%s' (expected 'true' or 'false'), defaulting to false (Gemini API)\n", envValue)
 			useVertexAI = false
 		}
 	}
@@ -108,24 +139,48 @@ func parseFlags() (transcriber.Config, string) {
 	}
 
 	return transcriber.Config{
-		APIKey:      *apiKey,
-		Location:    *location,
-		MeetingName: *meetingName,
-		ModelName:   *modelName,
-		ProjectID:   resolvedProjectID,
-		UseVertexAI: useVertexAI,
+		APIKey:               *apiKey,
+		Location:             *location,
+		MeetingName:          *meetingName,
+		ModelName:            *modelName,
+		ProjectID:            resolvedProjectID,
+		UseVertexAI:          useVertexAI,
+		ChunkDurationMinutes: *chunkDuration,
+		OverlapMinutes:       *overlap,
+		MaxParallelWorkers:   *parallel,
+		MaxRetries:           *maxRetries,
+		RequestTimeout:       *timeout,
 	}, *output
 }
 
 // validateConfig validates the configuration
 func validateConfig(cfg transcriber.Config) error {
 	if cfg.UseVertexAI {
+		// Vertex AI backend validation
 		if cfg.ProjectID == "" {
-			return fmt.Errorf("GCP_PROJECT must be set in .env or passed via --project when using Vertex AI")
+			return fmt.Errorf(`Vertex AI backend requires a GCP project ID.
+
+Please provide it via one of these methods:
+  1. Set GCP_PROJECT environment variable in .env file
+  2. Pass --project flag: --project your-project-id
+  3. Configure gcloud: gcloud config set project your-project-id
+
+Current backend: Vertex AI (GEMINI_USE_VERTEX_AI=true)
+To use Gemini API instead, set GEMINI_USE_VERTEX_AI=false and provide GEMINI_API_KEY`)
 		}
 	} else {
+		// Gemini API backend validation
 		if cfg.APIKey == "" {
-			return fmt.Errorf("GEMINI_API_KEY must be set in .env or passed via --api-key when GEMINI_USE_VERTEX_AI is false")
+			return fmt.Errorf(`Gemini API backend requires an API key.
+
+Please provide it via one of these methods:
+  1. Set GEMINI_API_KEY environment variable in .env file
+  2. Pass --api-key flag: --api-key your-api-key
+
+Get your API key from: https://makersuite.google.com/app/apikey
+
+Current backend: Gemini API (GEMINI_USE_VERTEX_AI=false or not set)
+To use Vertex AI instead, set GEMINI_USE_VERTEX_AI=true and provide GCP_PROJECT`)
 		}
 	}
 	return nil

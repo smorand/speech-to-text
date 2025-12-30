@@ -2,29 +2,43 @@ package transcriber
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"speech-to-text/internal/audio"
 
 	"google.golang.org/genai"
 )
 
-const (
-	maxConcurrentWorkers = 3
-)
-
 // Config holds configuration for the transcriber
 type Config struct {
-	APIKey      string
-	Location    string
-	MeetingName string
-	ModelName   string
-	ProjectID   string
-	UseVertexAI bool
+	APIKey               string
+	Location             string
+	MeetingName          string
+	ModelName            string
+	ProjectID            string
+	UseVertexAI          bool
+	ChunkDurationMinutes int // Duration of each chunk in minutes (default: 20)
+	OverlapMinutes       int // Overlap duration in minutes before/after each chunk (default: 1)
+	MaxParallelWorkers   int // Maximum number of parallel transcription workers (default: 4)
+	MaxRetries           int // Maximum number of API retry attempts (default: 3)
+	RequestTimeout       int // API request timeout in seconds (default: 1200 = 20 minutes)
+}
+
+// TokenUsage tracks cumulative token consumption
+type TokenUsage struct {
+	PromptTokens      int32
+	CandidatesTokens  int32
+	TotalTokens       int32
+	TranscriptionCalls int
+	MergeCalls         int
 }
 
 // Transcriber handles audio transcription using Vertex AI or Gemini API
@@ -33,6 +47,8 @@ type Transcriber struct {
 	config       Config
 	logFn        func(string)
 	systemPrompt string
+	tokenUsage   TokenUsage
+	usageMutex   sync.Mutex
 }
 
 // New creates a new Transcriber instance
@@ -105,7 +121,9 @@ func (t *Transcriber) Process(ctx context.Context, audioPath string) (string, er
 
 	var transcription string
 
-	if duration <= audio.ChunkDurationSeconds {
+	// Check if duration exceeds chunk duration threshold
+	chunkThreshold := float64(t.config.ChunkDurationMinutes * 60)
+	if duration <= chunkThreshold {
 		transcription, err = t.processSingleFile(ctx, audioPath)
 	} else {
 		transcription, err = t.processChunkedFile(ctx, audioPath, duration)
@@ -116,7 +134,12 @@ func (t *Transcriber) Process(ctx context.Context, audioPath string) (string, er
 	}
 
 	t.log("Finalizing output with meeting title")
-	return t.addMeetingTitle(transcription, audioPath), nil
+	result := t.addMeetingTitle(transcription, audioPath)
+
+	// Log final token usage summary
+	t.logFinalTokenUsage()
+
+	return result, nil
 }
 
 // addMeetingTitle adds or replaces the meeting title in the transcription
@@ -179,40 +202,136 @@ func (t *Transcriber) log(message string) {
 	}
 }
 
-// mergeTranscriptions merges all chunks in one pass using AI
+// trackTokenUsage records token consumption from an API response
+func (t *Transcriber) trackTokenUsage(resp *genai.GenerateContentResponse, isTranscription bool) {
+	if resp == nil || resp.UsageMetadata == nil {
+		return
+	}
+
+	t.usageMutex.Lock()
+	defer t.usageMutex.Unlock()
+
+	metadata := resp.UsageMetadata
+	t.tokenUsage.PromptTokens += metadata.PromptTokenCount
+	t.tokenUsage.CandidatesTokens += metadata.CandidatesTokenCount
+	t.tokenUsage.TotalTokens += metadata.TotalTokenCount
+
+	if isTranscription {
+		t.tokenUsage.TranscriptionCalls++
+	} else {
+		t.tokenUsage.MergeCalls++
+	}
+
+	t.log(fmt.Sprintf("API call tokens - Prompt: %d, Response: %d, Total: %d",
+		metadata.PromptTokenCount, metadata.CandidatesTokenCount, metadata.TotalTokenCount))
+}
+
+// logFinalTokenUsage logs the cumulative token consumption summary
+func (t *Transcriber) logFinalTokenUsage() {
+	t.usageMutex.Lock()
+	defer t.usageMutex.Unlock()
+
+	if t.tokenUsage.TotalTokens == 0 {
+		return
+	}
+
+	t.log("═══════════════════════════════════════════════════════════")
+	t.log("TOKEN USAGE SUMMARY")
+	t.log("═══════════════════════════════════════════════════════════")
+	t.log(fmt.Sprintf("API Calls:"))
+	t.log(fmt.Sprintf("  - Transcription calls: %d", t.tokenUsage.TranscriptionCalls))
+	t.log(fmt.Sprintf("  - Merge calls:         %d", t.tokenUsage.MergeCalls))
+	t.log(fmt.Sprintf("  - Total API calls:     %d", t.tokenUsage.TranscriptionCalls+t.tokenUsage.MergeCalls))
+	t.log(fmt.Sprintf(""))
+	t.log(fmt.Sprintf("Token Consumption:"))
+	t.log(fmt.Sprintf("  - Input tokens:        %s", formatNumber(t.tokenUsage.PromptTokens)))
+	t.log(fmt.Sprintf("  - Output tokens:       %s", formatNumber(t.tokenUsage.CandidatesTokens)))
+	t.log(fmt.Sprintf("  - TOTAL TOKENS:        %s", formatNumber(t.tokenUsage.TotalTokens)))
+	t.log("═══════════════════════════════════════════════════════════")
+}
+
+// formatNumber formats a number with thousand separators
+func formatNumber(n int32) string {
+	str := fmt.Sprintf("%d", n)
+	if len(str) <= 3 {
+		return str
+	}
+
+	var result []rune
+	for i, digit := range str {
+		if i > 0 && (len(str)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, digit)
+	}
+	return string(result)
+}
+
+// mergeTranscriptions merges chunks using smart parallel overlap merging
 func (t *Transcriber) mergeTranscriptions(ctx context.Context, transcriptions []string) (string, error) {
 	if len(transcriptions) == 1 {
 		t.log("Single chunk - no merging needed")
 		return transcriptions[0], nil
 	}
 
-	t.log(fmt.Sprintf("Merging all %d chunks in one pass", len(transcriptions)))
+	t.log(fmt.Sprintf("Merging %d chunks using parallel overlap reconciliation", len(transcriptions)))
 
-	chunksText := buildChunksText(transcriptions)
-	mergePrompt := buildMergePrompt(len(transcriptions), chunksText)
+	// Step 1: Merge overlaps in parallel (N-1 merges for N chunks)
+	numOverlaps := len(transcriptions) - 1
+	mergedOverlaps := make([]string, numOverlaps)
+	errChan := make(chan error, numOverlaps)
 
-	t.log("Sending all chunks to AI for merge reconciliation")
+	// Use same semaphore pattern for parallel overlap merges
+	semaphore := make(chan struct{}, t.config.MaxParallelWorkers)
+	var wg sync.WaitGroup
 
-	resp, err := t.client.Models.GenerateContent(ctx, t.config.ModelName,
-		genai.Text(mergePrompt),
-		nil,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to merge transcriptions: %w", err)
+	t.log(fmt.Sprintf("Starting parallel merge of %d overlaps (max %d concurrent)", numOverlaps, t.config.MaxParallelWorkers))
+
+	for i := 0; i < numOverlaps; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			// Merge overlap between chunk[idx] and chunk[idx+1]
+			merged, err := t.mergeOverlapRegion(ctx, transcriptions[idx], transcriptions[idx+1], idx+1, len(transcriptions))
+			if err != nil {
+				errChan <- fmt.Errorf("overlap %d-%d merge failed: %w", idx+1, idx+2, err)
+				return
+			}
+
+			mergedOverlaps[idx] = merged
+			t.log(fmt.Sprintf("Merged overlap %d/%d (between chunks %d and %d)", idx+1, numOverlaps, idx+1, idx+2))
+		}(i)
 	}
 
-	t.log("All chunks merged successfully")
+	wg.Wait()
+	close(errChan)
 
-	return extractTextFromResponse(resp), nil
+	if len(errChan) > 0 {
+		return "", <-errChan
+	}
+
+	// Step 2: Concatenate locally without API
+	t.log("Concatenating chunks with merged overlaps")
+	result := t.concatenateChunksWithMergedOverlaps(transcriptions, mergedOverlaps)
+
+	t.log("All chunks merged successfully")
+	return result, nil
 }
 
 // processChunkedFile handles audio files that need to be split into chunks
 func (t *Transcriber) processChunkedFile(ctx context.Context, audioPath string, duration float64) (string, error) {
-	numChunks := calculateNumChunks(duration)
-	t.log(fmt.Sprintf("Recording exceeds 30 minutes - will split into %d chunks", numChunks))
-	t.log(fmt.Sprintf("Cutting recording into %d chunks with 30-second overlaps", numChunks))
+	chunkDuration := float64(t.config.ChunkDurationMinutes * 60)
+	numChunks := int(math.Ceil(duration / chunkDuration))
 
-	chunkFiles, err := audio.SplitIntoChunks(audioPath, numChunks, t.logFn)
+	t.log(fmt.Sprintf("Recording exceeds %d minutes - will split into %d chunks", t.config.ChunkDurationMinutes, numChunks))
+	t.log(fmt.Sprintf("Cutting recording into %d chunks with %d-minute overlaps (before and after)",
+		numChunks, t.config.OverlapMinutes))
+
+	chunkFiles, err := audio.SplitIntoChunks(audioPath, duration, t.config.ChunkDurationMinutes, t.config.OverlapMinutes, t.logFn)
 	if err != nil {
 		return "", err
 	}
@@ -237,18 +356,18 @@ func (t *Transcriber) processChunkedFile(ctx context.Context, audioPath string, 
 
 // processSingleFile handles audio files that fit within a single chunk
 func (t *Transcriber) processSingleFile(ctx context.Context, audioPath string) (string, error) {
-	t.log("Recording is under 30 minutes - no chunking needed")
+	t.log(fmt.Sprintf("Recording is under %d minutes - no chunking needed", t.config.ChunkDurationMinutes))
 	return t.transcribeFile(ctx, audioPath)
 }
 
 // transcribeChunksParallel transcribes multiple chunks in parallel with concurrency limit
 func (t *Transcriber) transcribeChunksParallel(ctx context.Context, chunkFiles []string) ([]string, error) {
 	numChunks := len(chunkFiles)
-	t.log(fmt.Sprintf("Starting parallel transcription of %d chunks (max %d concurrent)", numChunks, maxConcurrentWorkers))
+	t.log(fmt.Sprintf("Starting parallel transcription of %d chunks (max %d concurrent)", numChunks, t.config.MaxParallelWorkers))
 
 	transcriptions := make([]string, numChunks)
 	errChan := make(chan error, numChunks)
-	semaphore := make(chan struct{}, maxConcurrentWorkers)
+	semaphore := make(chan struct{}, t.config.MaxParallelWorkers)
 	var wg sync.WaitGroup
 
 	for i, chunkFile := range chunkFiles {
@@ -291,59 +410,176 @@ func (t *Transcriber) transcribeFile(ctx context.Context, audioPath string) (str
 
 	mimeType := audio.GetMimeType(filepath.Ext(audioPath))
 	t.log(fmt.Sprintf("Audio format: %s", mimeType))
-	t.log("Sending audio to Gemini API for transcription")
 
-	resp, err := t.client.Models.GenerateContent(ctx, t.config.ModelName,
-		[]*genai.Content{
-			genai.NewContentFromText("Please transcribe this audio file according to your system instructions.", genai.RoleUser),
-			genai.NewContentFromBytes(audioData, mimeType, genai.RoleUser),
-		},
-		&genai.GenerateContentConfig{
-			SystemInstruction: genai.NewContentFromText(t.systemPrompt, genai.RoleUser),
-		},
-	)
+	// Create context with timeout
+	timeout := time.Duration(t.config.RequestTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 1200 * time.Second // default 20 minutes
+	}
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var resp *genai.GenerateContentResponse
+	operation := fmt.Sprintf("transcription of %s", filepath.Base(audioPath))
+
+	t.log(fmt.Sprintf("Sending audio to Gemini API for transcription (timeout: %v)", timeout))
+
+	err = t.retryWithBackoff(timeoutCtx, operation, func() error {
+		var apiErr error
+		resp, apiErr = t.client.Models.GenerateContent(timeoutCtx, t.config.ModelName,
+			[]*genai.Content{
+				genai.NewContentFromText("Please transcribe this audio file according to your system instructions.", genai.RoleUser),
+				genai.NewContentFromBytes(audioData, mimeType, genai.RoleUser),
+			},
+			&genai.GenerateContentConfig{
+				SystemInstruction: genai.NewContentFromText(t.systemPrompt, genai.RoleUser),
+			},
+		)
+		return apiErr
+	})
+
 	if err != nil {
 		return "", fmt.Errorf("failed to generate content: %w", err)
 	}
 
 	t.log("Transcription completed successfully")
 
+	// Track token usage
+	t.trackTokenUsage(resp, true)
+
 	return extractTextFromResponse(resp), nil
 }
 
-// buildChunksText constructs the formatted text of all chunks for merging
-func buildChunksText(transcriptions []string) string {
-	var chunksText strings.Builder
-	for i, transcription := range transcriptions {
-		chunksText.WriteString(fmt.Sprintf("\n\n%s\nCHUNK %d/%d:\n%s\n%s",
-			strings.Repeat("=", 80), i+1, len(transcriptions), strings.Repeat("=", 80), transcription))
-	}
-	return chunksText.String()
-}
+// mergeOverlapRegion merges the overlap between two consecutive chunks
+func (t *Transcriber) mergeOverlapRegion(ctx context.Context, chunk1, chunk2 string, chunkNum, totalChunks int) (string, error) {
+	// Extract overlap regions (last 150 lines of chunk1, first 150 lines of chunk2)
+	chunk1Lines := strings.Split(chunk1, "\n")
+	chunk2Lines := strings.Split(chunk2, "\n")
 
-// buildMergePrompt creates the prompt for merging chunks
-func buildMergePrompt(numChunks int, chunksText string) string {
-	return fmt.Sprintf(`You are merging %d overlapping meeting transcriptions into one complete document.
+	overlapSize := 30
+	chunk1End := extractLastLines(chunk1Lines, overlapSize)
+	chunk2Start := extractFirstLines(chunk2Lines, overlapSize)
 
-These chunks were created from a single audio recording split into 30-minute segments with 30-second overlaps between consecutive chunks.
+	prompt := fmt.Sprintf(`You are merging two overlapping sections from a meeting transcription.
 
-Your task is to:
-1. Identify and remove the overlapping sections between consecutive chunks
-2. Merge everything into ONE seamless meeting minutes document
-3. Consolidate the Attendees lists (remove duplicates, preserve all unique names)
-4. Keep the conversation flow natural and continuous in the Minutes section
-5. Preserve the markdown format: # Meeting Title, ## Attendees, ## Minutes
-6. Use consistent attendee names throughout (don't create duplicates)
+These are consecutive segments with a %d-minute overlap region between them.
+Your task is to identify duplicate content and create a seamless transition.
 
-HERE ARE ALL THE CHUNKS:
+SEGMENT %d END (last part):
 %s
 
-Return ONLY the final merged meeting minutes in proper markdown format without any explanations.`, numChunks, chunksText)
+SEGMENT %d START (first part):
+%s
+
+Instructions:
+1. Identify where the segments overlap (look for repeated conversation)
+2. Remove duplicate lines from the overlap region
+3. Create a smooth transition preserving speaker names and format
+4. Keep the markdown format (attendee names in bold)
+5. Return ONLY the merged transition without explanations
+
+Return the clean merged section:`,
+		t.config.OverlapMinutes*2,
+		chunkNum,
+		chunk1End,
+		chunkNum+1,
+		chunk2Start)
+
+	// Create context with timeout
+	timeout := time.Duration(t.config.RequestTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 1200 * time.Second
+	}
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var resp *genai.GenerateContentResponse
+	operation := fmt.Sprintf("overlap merge %d-%d", chunkNum, chunkNum+1)
+
+	err := t.retryWithBackoff(timeoutCtx, operation, func() error {
+		var apiErr error
+		resp, apiErr = t.client.Models.GenerateContent(timeoutCtx, t.config.ModelName,
+			genai.Text(prompt),
+			nil,
+		)
+		return apiErr
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	// Track token usage
+	t.trackTokenUsage(resp, false)
+
+	return extractTextFromResponse(resp), nil
 }
 
-// calculateNumChunks determines how many chunks are needed for a given duration
-func calculateNumChunks(duration float64) int {
-	return int((duration + audio.ChunkDurationSeconds - 1) / audio.ChunkDurationSeconds)
+// concatenateChunksWithMergedOverlaps combines chunks with AI-merged overlaps
+func (t *Transcriber) concatenateChunksWithMergedOverlaps(transcriptions, mergedOverlaps []string) string {
+	var result strings.Builder
+
+	overlapSize := 30
+
+	for i, chunk := range transcriptions {
+		lines := strings.Split(chunk, "\n")
+
+		if i == 0 {
+			// First chunk: include everything except last overlap
+			contentLines := removeLastLines(lines, overlapSize)
+			result.WriteString(strings.Join(contentLines, "\n"))
+			result.WriteString("\n")
+		} else if i == len(transcriptions)-1 {
+			// Last chunk: skip first overlap, include rest
+			contentLines := removeFirstLines(lines, overlapSize)
+			result.WriteString(strings.Join(contentLines, "\n"))
+		} else {
+			// Middle chunks: skip both overlaps
+			contentLines := removeFirstLines(removeLastLines(lines, overlapSize), overlapSize)
+			result.WriteString(strings.Join(contentLines, "\n"))
+			result.WriteString("\n")
+		}
+
+		// Add merged overlap transition (except after last chunk)
+		if i < len(mergedOverlaps) {
+			result.WriteString(mergedOverlaps[i])
+			result.WriteString("\n")
+		}
+	}
+
+	return result.String()
+}
+
+// extractLastLines gets the last N lines from a slice
+func extractLastLines(lines []string, n int) string {
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
+// extractFirstLines gets the first N lines from a slice
+func extractFirstLines(lines []string, n int) string {
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[:n], "\n")
+}
+
+// removeLastLines removes the last N lines from a slice
+func removeLastLines(lines []string, n int) []string {
+	if len(lines) <= n {
+		return []string{}
+	}
+	return lines[:len(lines)-n]
+}
+
+// removeFirstLines removes the first N lines from a slice
+func removeFirstLines(lines []string, n int) []string {
+	if len(lines) <= n {
+		return []string{}
+	}
+	return lines[n:]
 }
 
 // cleanupChunks removes temporary chunk files
@@ -367,4 +603,124 @@ func extractTextFromResponse(resp *genai.GenerateContentResponse) string {
 		}
 	}
 	return text.String()
+}
+
+// retryWithBackoff executes a function with exponential backoff retry logic
+func (t *Transcriber) retryWithBackoff(ctx context.Context, operation string, fn func() error) error {
+	maxRetries := t.config.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = 3 // default
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Calculate exponential backoff: 2^attempt seconds (2s, 4s, 8s, 16s...)
+			backoff := time.Duration(1<<uint(attempt)) * time.Second
+			t.log(fmt.Sprintf("Retry attempt %d/%d for %s after %v", attempt, maxRetries, operation, backoff))
+
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		err := fn()
+		if err == nil {
+			if attempt > 0 {
+				t.log(fmt.Sprintf("%s succeeded after %d retries", operation, attempt))
+			}
+			return nil
+		}
+
+		lastErr = err
+
+		// Check if error is retryable
+		retryable := isRetryableError(err)
+		if !retryable {
+			// Debug: log why it's not retryable
+			t.log(fmt.Sprintf("DEBUG: Error string: '%s'", err.Error()))
+			t.log(fmt.Sprintf("DEBUG: Contains 'eof': %v", strings.Contains(strings.ToLower(err.Error()), "eof")))
+			t.log(fmt.Sprintf("DEBUG: Contains 'unexpected': %v", strings.Contains(strings.ToLower(err.Error()), "unexpected")))
+			t.log(fmt.Sprintf("%s failed with non-retryable error: %v", operation, err))
+			return err
+		}
+
+		if attempt < maxRetries {
+			t.log(fmt.Sprintf("%s failed (attempt %d/%d) - will retry: %v", operation, attempt+1, maxRetries+1, err))
+		} else {
+			t.log(fmt.Sprintf("%s failed (final attempt %d/%d): %v", operation, attempt+1, maxRetries+1, err))
+		}
+	}
+
+	return fmt.Errorf("%s failed after %d retries: %w", operation, maxRetries, lastErr)
+}
+
+// isRetryableError determines if an error should trigger a retry
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Get the full error chain as string
+	errStr := err.Error()
+	errStrLower := strings.ToLower(errStr)
+
+	// Also check wrapped errors
+	var unwrappedErr error = err
+	for unwrappedErr != nil {
+		unwrappedStr := strings.ToLower(unwrappedErr.Error())
+
+		// Network-related errors that are retryable
+		var netErr net.Error
+		if errors.As(unwrappedErr, &netErr) {
+			if netErr.Timeout() || netErr.Temporary() {
+				return true
+			}
+		}
+
+		// Check patterns on this level
+		for _, pattern := range retryablePatterns() {
+			if strings.Contains(unwrappedStr, pattern) {
+				return true
+			}
+		}
+
+		// Try to unwrap
+		unwrappedErr = errors.Unwrap(unwrappedErr)
+	}
+
+	// Check patterns on full error string as fallback
+	for _, pattern := range retryablePatterns() {
+		if strings.Contains(errStrLower, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// retryablePatterns returns common retryable error patterns
+func retryablePatterns() []string {
+	return []string{
+		"unexpected eof",          // Network/connection errors
+		"eof",                     // Broader EOF catch
+		"connection reset",        // Network reset
+		"connection refused",      // Connection issues
+		"timeout",                 // Any timeout
+		"deadline exceeded",       // Context deadline
+		"tls handshake timeout",   // TLS issues
+		"i/o timeout",            // I/O timeouts
+		"no such host",           // DNS issues
+		"temporary failure",       // Temporary errors
+		"broken pipe",            // Pipe errors
+		"503",                    // Service Unavailable
+		"429",                    // Too Many Requests
+		"500",                    // Internal Server Error
+		"502",                    // Bad Gateway
+		"504",                    // Gateway Timeout
+		"error sending request",  // Generic send errors
+		"dorequest",              // genai library error wrapper
+	}
 }

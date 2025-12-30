@@ -2,16 +2,12 @@ package audio
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-)
-
-const (
-	ChunkDurationSeconds = 30 * 60 // 30 minutes
-	OverlapSeconds       = 30      // 30 seconds overlap
 )
 
 // GetDuration returns the duration of an audio file in seconds
@@ -52,19 +48,40 @@ func GetMimeType(ext string) string {
 	return "audio/mp3"
 }
 
-// SplitIntoChunks splits audio file into chunks with overlaps
-func SplitIntoChunks(audioPath string, numChunks int, logFn func(string)) ([]string, error) {
+// SplitIntoChunks splits audio file into chunks with overlaps before and after
+func SplitIntoChunks(audioPath string, totalDuration float64, chunkDurationMinutes, overlapMinutes int, logFn func(string)) ([]string, error) {
+	// Convert minutes to seconds
+	chunkDuration := float64(chunkDurationMinutes * 60)
+	overlap := float64(overlapMinutes * 60)
+
+	// Calculate number of chunks needed
+	numChunks := int(math.Ceil(totalDuration / chunkDuration))
+
 	var chunkFiles []string
 	ext := filepath.Ext(audioPath)
 
 	for i := 0; i < numChunks; i++ {
-		startTime := calculateStartTime(i)
+		var startTime, duration float64
+
+		if i == 0 {
+			// First chunk: 0 to (chunkDuration + overlap)
+			startTime = 0
+			duration = math.Min(chunkDuration+overlap, totalDuration)
+		} else if i == numChunks-1 {
+			// Last chunk: (prevEnd - overlap) to end
+			startTime = float64(i)*chunkDuration - overlap
+			duration = totalDuration - startTime
+		} else {
+			// Middle chunks: (prevEnd - overlap) to (chunkDuration + 2*overlap)
+			startTime = float64(i)*chunkDuration - overlap
+			duration = chunkDuration + 2*overlap
+		}
+
 		chunkPath := filepath.Join(os.TempDir(), fmt.Sprintf("chunk_%d%s", i, ext))
-		duration := float64(ChunkDurationSeconds + OverlapSeconds)
 
 		if logFn != nil {
-			logFn(fmt.Sprintf("Creating chunk %d/%d - start: %.1fs, duration: %.1fs",
-				i+1, numChunks, startTime, duration))
+			logFn(fmt.Sprintf("Creating chunk %d/%d - start: %.1fs (%.1fmin), duration: %.1fs (%.1fmin)",
+				i+1, numChunks, startTime, startTime/60, duration, duration/60))
 		}
 
 		if err := createChunk(audioPath, chunkPath, startTime, duration); err != nil {
@@ -75,14 +92,6 @@ func SplitIntoChunks(audioPath string, numChunks int, logFn func(string)) ([]str
 	}
 
 	return chunkFiles, nil
-}
-
-// calculateStartTime computes the start time for a given chunk index
-func calculateStartTime(chunkIndex int) float64 {
-	if chunkIndex == 0 {
-		return 0
-	}
-	return float64(chunkIndex*ChunkDurationSeconds) - OverlapSeconds
 }
 
 // createChunk creates a single audio chunk using ffmpeg
