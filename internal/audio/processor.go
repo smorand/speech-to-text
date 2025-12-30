@@ -1,6 +1,8 @@
 package audio
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -49,13 +51,19 @@ func GetMimeType(ext string) string {
 }
 
 // SplitIntoChunks splits audio file into chunks with overlaps before and after
-func SplitIntoChunks(audioPath string, totalDuration float64, chunkDurationMinutes, overlapMinutes int, logFn func(string)) ([]string, error) {
-	// Convert minutes to seconds
+func SplitIntoChunks(audioPath string, totalDuration float64, chunkDurationMinutes, overlapSeconds int, logFn func(string)) ([]string, error) {
+	// Convert chunk duration from minutes to seconds, overlap is already in seconds
 	chunkDuration := float64(chunkDurationMinutes * 60)
-	overlap := float64(overlapMinutes * 60)
+	overlap := float64(overlapSeconds)
 
 	// Calculate number of chunks needed
 	numChunks := int(math.Ceil(totalDuration / chunkDuration))
+
+	// Create temporary directory with random name
+	tempDir, err := createTempDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temporary directory: %w", err)
+	}
 
 	var chunkFiles []string
 	ext := filepath.Ext(audioPath)
@@ -77,7 +85,7 @@ func SplitIntoChunks(audioPath string, totalDuration float64, chunkDurationMinut
 			duration = chunkDuration + 2*overlap
 		}
 
-		chunkPath := filepath.Join(os.TempDir(), fmt.Sprintf("chunk_%d%s", i, ext))
+		chunkPath := filepath.Join(tempDir, fmt.Sprintf("chunk_%d%s", i, ext))
 
 		if logFn != nil {
 			logFn(fmt.Sprintf("Creating chunk %d/%d - start: %.1fs (%.1fmin), duration: %.1fs (%.1fmin)",
@@ -92,6 +100,24 @@ func SplitIntoChunks(audioPath string, totalDuration float64, chunkDurationMinut
 	}
 
 	return chunkFiles, nil
+}
+
+// createTempDir creates a temporary directory with a random name
+func createTempDir() (string, error) {
+	// Generate random directory name
+	randomBytes := make([]byte, 8)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	randomName := "speech-to-text-" + hex.EncodeToString(randomBytes)
+
+	// Create directory in system temp
+	tempDir := filepath.Join(os.TempDir(), randomName)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return "", err
+	}
+
+	return tempDir, nil
 }
 
 // createChunk creates a single audio chunk using ffmpeg
