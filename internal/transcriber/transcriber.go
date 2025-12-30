@@ -51,7 +51,7 @@ func New(ctx context.Context, cfg Config, logFn func(string)) (*Transcriber, err
 			return nil, fmt.Errorf("failed to create Vertex AI client: %w", err)
 		}
 		if logFn != nil {
-			logFn("Using Vertex AI backend")
+			logFn(fmt.Sprintf("Using Vertex AI backend with model: %s", cfg.ModelName))
 		}
 	} else {
 		// Use Gemini API backend
@@ -66,7 +66,7 @@ func New(ctx context.Context, cfg Config, logFn func(string)) (*Transcriber, err
 			return nil, fmt.Errorf("failed to create Gemini API client: %w", err)
 		}
 		if logFn != nil {
-			logFn("Using Gemini API backend (generativelanguage.googleapis.com)")
+			logFn(fmt.Sprintf("Using Gemini API backend (generativelanguage.googleapis.com) with model: %s", cfg.ModelName))
 		}
 	}
 
