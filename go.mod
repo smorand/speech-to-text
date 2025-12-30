@@ -1,10 +1,10 @@
 module speech-to-text
 
-go 1.25.4
+go 1.24.4
 
 require (
 	github.com/joho/godotenv v1.5.1
-	google.golang.org/genai v1.39.0
+	google.golang.org/genai v1.40.0
 )
 
 require (
