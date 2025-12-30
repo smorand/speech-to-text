@@ -77,7 +77,7 @@ func parseFlags() (transcriber.Config, string) {
 		meetingName   = flag.String("m", "", "Meeting name for the title")
 		modelName     = flag.String("model", "gemini-2.5-flash", "Gemini model name")
 		output        = flag.String("o", "", "Output file path (markdown format)")
-		overlap       = flag.Int("overlap", 1, "Overlap duration in minutes before/after each chunk")
+		overlapSeconds = flag.Int("overlap-seconds", 5, "Overlap duration in seconds before/after each chunk")
 		parallel      = flag.Int("parallel", 4, "Maximum number of parallel transcription workers")
 		projectID     = flag.String("project", "", "GCP project ID (Vertex AI only)")
 		timeout       = flag.Int("timeout", 1200, "API request timeout in seconds (default: 1200 = 20 minutes)")
@@ -97,12 +97,12 @@ func parseFlags() (transcriber.Config, string) {
 		fmt.Fprintf(os.Stderr, "Error: chunk-duration must be at least 1 minute\n")
 		os.Exit(1)
 	}
-	if *overlap < 0 {
-		fmt.Fprintf(os.Stderr, "Error: overlap cannot be negative\n")
+	if *overlapSeconds < 0 {
+		fmt.Fprintf(os.Stderr, "Error: overlap-seconds cannot be negative\n")
 		os.Exit(1)
 	}
-	if *overlap >= *chunkDuration {
-		fmt.Fprintf(os.Stderr, "Error: overlap must be less than chunk-duration\n")
+	if *overlapSeconds >= (*chunkDuration * 60) {
+		fmt.Fprintf(os.Stderr, "Error: overlap-seconds must be less than chunk duration\n")
 		os.Exit(1)
 	}
 	if *parallel < 1 {
@@ -146,7 +146,7 @@ func parseFlags() (transcriber.Config, string) {
 		ProjectID:            resolvedProjectID,
 		UseVertexAI:          useVertexAI,
 		ChunkDurationMinutes: *chunkDuration,
-		OverlapMinutes:       *overlap,
+		OverlapSeconds:       *overlapSeconds,
 		MaxParallelWorkers:   *parallel,
 		MaxRetries:           *maxRetries,
 		RequestTimeout:       *timeout,

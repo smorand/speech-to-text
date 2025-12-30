@@ -26,7 +26,7 @@ type Config struct {
 	ProjectID            string
 	UseVertexAI          bool
 	ChunkDurationMinutes int // Duration of each chunk in minutes (default: 20)
-	OverlapMinutes       int // Overlap duration in minutes before/after each chunk (default: 1)
+	OverlapSeconds       int // Overlap duration in seconds before/after each chunk (default: 5)
 	MaxParallelWorkers   int // Maximum number of parallel transcription workers (default: 4)
 	MaxRetries           int // Maximum number of API retry attempts (default: 3)
 	RequestTimeout       int // API request timeout in seconds (default: 1200 = 20 minutes)
@@ -267,59 +267,29 @@ func formatNumber(n int32) string {
 	return string(result)
 }
 
-// mergeTranscriptions merges chunks using smart parallel overlap merging
+// mergeTranscriptions simply concatenates chunks with separator lines
 func (t *Transcriber) mergeTranscriptions(ctx context.Context, transcriptions []string) (string, error) {
 	if len(transcriptions) == 1 {
 		t.log("Single chunk - no merging needed")
 		return transcriptions[0], nil
 	}
 
-	t.log(fmt.Sprintf("Merging %d chunks using parallel overlap reconciliation", len(transcriptions)))
+	t.log(fmt.Sprintf("Concatenating %d chunks with separator lines", len(transcriptions)))
 
-	// Step 1: Merge overlaps in parallel (N-1 merges for N chunks)
-	numOverlaps := len(transcriptions) - 1
-	mergedOverlaps := make([]string, numOverlaps)
-	errChan := make(chan error, numOverlaps)
+	var result strings.Builder
+	separator := "\n\n======= CUT =======\n\n"
 
-	// Use same semaphore pattern for parallel overlap merges
-	semaphore := make(chan struct{}, t.config.MaxParallelWorkers)
-	var wg sync.WaitGroup
+	for i, transcription := range transcriptions {
+		result.WriteString(transcription)
 
-	t.log(fmt.Sprintf("Starting parallel merge of %d overlaps (max %d concurrent)", numOverlaps, t.config.MaxParallelWorkers))
-
-	for i := 0; i < numOverlaps; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			// Merge overlap between chunk[idx] and chunk[idx+1]
-			merged, err := t.mergeOverlapRegion(ctx, transcriptions[idx], transcriptions[idx+1], idx+1, len(transcriptions))
-			if err != nil {
-				errChan <- fmt.Errorf("overlap %d-%d merge failed: %w", idx+1, idx+2, err)
-				return
-			}
-
-			mergedOverlaps[idx] = merged
-			t.log(fmt.Sprintf("Merged overlap %d/%d (between chunks %d and %d)", idx+1, numOverlaps, idx+1, idx+2))
-		}(i)
+		// Add separator between chunks (but not after the last one)
+		if i < len(transcriptions)-1 {
+			result.WriteString(separator)
+		}
 	}
 
-	wg.Wait()
-	close(errChan)
-
-	if len(errChan) > 0 {
-		return "", <-errChan
-	}
-
-	// Step 2: Concatenate locally without API
-	t.log("Concatenating chunks with merged overlaps")
-	result := t.concatenateChunksWithMergedOverlaps(transcriptions, mergedOverlaps)
-
-	t.log("All chunks merged successfully")
-	return result, nil
+	t.log("All chunks concatenated successfully")
+	return result.String(), nil
 }
 
 // processChunkedFile handles audio files that need to be split into chunks
@@ -328,10 +298,10 @@ func (t *Transcriber) processChunkedFile(ctx context.Context, audioPath string, 
 	numChunks := int(math.Ceil(duration / chunkDuration))
 
 	t.log(fmt.Sprintf("Recording exceeds %d minutes - will split into %d chunks", t.config.ChunkDurationMinutes, numChunks))
-	t.log(fmt.Sprintf("Cutting recording into %d chunks with %d-minute overlaps (before and after)",
-		numChunks, t.config.OverlapMinutes))
+	t.log(fmt.Sprintf("Cutting recording into %d chunks with %d-second overlaps (before and after)",
+		numChunks, t.config.OverlapSeconds))
 
-	chunkFiles, err := audio.SplitIntoChunks(audioPath, duration, t.config.ChunkDurationMinutes, t.config.OverlapMinutes, t.logFn)
+	chunkFiles, err := audio.SplitIntoChunks(audioPath, duration, t.config.ChunkDurationMinutes, t.config.OverlapSeconds, t.logFn)
 	if err != nil {
 		return "", err
 	}
@@ -450,143 +420,20 @@ func (t *Transcriber) transcribeFile(ctx context.Context, audioPath string) (str
 	return extractTextFromResponse(resp), nil
 }
 
-// mergeOverlapRegion merges the overlap between two consecutive chunks
-func (t *Transcriber) mergeOverlapRegion(ctx context.Context, chunk1, chunk2 string, chunkNum, totalChunks int) (string, error) {
-	// Extract overlap regions (last 150 lines of chunk1, first 150 lines of chunk2)
-	chunk1Lines := strings.Split(chunk1, "\n")
-	chunk2Lines := strings.Split(chunk2, "\n")
-
-	overlapSize := 30
-	chunk1End := extractLastLines(chunk1Lines, overlapSize)
-	chunk2Start := extractFirstLines(chunk2Lines, overlapSize)
-
-	prompt := fmt.Sprintf(`You are merging two overlapping sections from a meeting transcription.
-
-These are consecutive segments with a %d-minute overlap region between them.
-Your task is to identify duplicate content and create a seamless transition.
-
-SEGMENT %d END (last part):
-%s
-
-SEGMENT %d START (first part):
-%s
-
-Instructions:
-1. Identify where the segments overlap (look for repeated conversation)
-2. Remove duplicate lines from the overlap region
-3. Create a smooth transition preserving speaker names and format
-4. Keep the markdown format (attendee names in bold)
-5. Return ONLY the merged transition without explanations
-
-Return the clean merged section:`,
-		t.config.OverlapMinutes*2,
-		chunkNum,
-		chunk1End,
-		chunkNum+1,
-		chunk2Start)
-
-	// Create context with timeout
-	timeout := time.Duration(t.config.RequestTimeout) * time.Second
-	if timeout <= 0 {
-		timeout = 1200 * time.Second
-	}
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	var resp *genai.GenerateContentResponse
-	operation := fmt.Sprintf("overlap merge %d-%d", chunkNum, chunkNum+1)
-
-	err := t.retryWithBackoff(timeoutCtx, operation, func() error {
-		var apiErr error
-		resp, apiErr = t.client.Models.GenerateContent(timeoutCtx, t.config.ModelName,
-			genai.Text(prompt),
-			nil,
-		)
-		return apiErr
-	})
-
-	if err != nil {
-		return "", err
-	}
-
-	// Track token usage
-	t.trackTokenUsage(resp, false)
-
-	return extractTextFromResponse(resp), nil
-}
-
-// concatenateChunksWithMergedOverlaps combines chunks with AI-merged overlaps
-func (t *Transcriber) concatenateChunksWithMergedOverlaps(transcriptions, mergedOverlaps []string) string {
-	var result strings.Builder
-
-	overlapSize := 30
-
-	for i, chunk := range transcriptions {
-		lines := strings.Split(chunk, "\n")
-
-		if i == 0 {
-			// First chunk: include everything except last overlap
-			contentLines := removeLastLines(lines, overlapSize)
-			result.WriteString(strings.Join(contentLines, "\n"))
-			result.WriteString("\n")
-		} else if i == len(transcriptions)-1 {
-			// Last chunk: skip first overlap, include rest
-			contentLines := removeFirstLines(lines, overlapSize)
-			result.WriteString(strings.Join(contentLines, "\n"))
-		} else {
-			// Middle chunks: skip both overlaps
-			contentLines := removeFirstLines(removeLastLines(lines, overlapSize), overlapSize)
-			result.WriteString(strings.Join(contentLines, "\n"))
-			result.WriteString("\n")
-		}
-
-		// Add merged overlap transition (except after last chunk)
-		if i < len(mergedOverlaps) {
-			result.WriteString(mergedOverlaps[i])
-			result.WriteString("\n")
-		}
-	}
-
-	return result.String()
-}
-
-// extractLastLines gets the last N lines from a slice
-func extractLastLines(lines []string, n int) string {
-	if len(lines) <= n {
-		return strings.Join(lines, "\n")
-	}
-	return strings.Join(lines[len(lines)-n:], "\n")
-}
-
-// extractFirstLines gets the first N lines from a slice
-func extractFirstLines(lines []string, n int) string {
-	if len(lines) <= n {
-		return strings.Join(lines, "\n")
-	}
-	return strings.Join(lines[:n], "\n")
-}
-
-// removeLastLines removes the last N lines from a slice
-func removeLastLines(lines []string, n int) []string {
-	if len(lines) <= n {
-		return []string{}
-	}
-	return lines[:len(lines)-n]
-}
-
-// removeFirstLines removes the first N lines from a slice
-func removeFirstLines(lines []string, n int) []string {
-	if len(lines) <= n {
-		return []string{}
-	}
-	return lines[n:]
-}
-
-// cleanupChunks removes temporary chunk files
+// cleanupChunks removes temporary chunk files and directory
 func (t *Transcriber) cleanupChunks(chunkFiles []string) {
+	if len(chunkFiles) == 0 {
+		return
+	}
+
 	t.log("Cleaning up temporary chunk files")
-	for _, chunkFile := range chunkFiles {
-		os.Remove(chunkFile)
+
+	// Get the temp directory from the first chunk file
+	tempDir := filepath.Dir(chunkFiles[0])
+
+	// Remove the entire temp directory
+	if err := os.RemoveAll(tempDir); err != nil {
+		t.log(fmt.Sprintf("Warning: failed to remove temp directory %s: %v", tempDir, err))
 	}
 }
 
