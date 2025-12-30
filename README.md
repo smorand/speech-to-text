@@ -69,17 +69,17 @@ make uninstall
 
 ## Configuration
 
-### 1. Enable Vertex AI API
+The tool supports two backends: **Vertex AI** (default) and **Gemini API**.
 
-Make sure Vertex AI API is enabled in your GCP project:
+### Option 1: Vertex AI Backend (Default)
+
+#### 1. Enable Vertex AI API
 
 ```bash
 gcloud services enable aiplatform.googleapis.com --project=your-project-id
 ```
 
-### 2. Authentication
-
-Authenticate with GCP:
+#### 2. Authentication
 
 ```bash
 # Standard authentication
@@ -89,23 +89,52 @@ gcloud auth application-default login
 gcloud auth application-default login --impersonate-service-account=your-adm-account@domain.com
 ```
 
-### 3. Environment Configuration
+#### 3. Environment Configuration
 
-Create a `.env` file in the project root:
+Create a `.env` file:
 
 ```bash
-# Copy the example file
 cp .env.example .env
 ```
 
-Then edit `.env` and set your GCP project:
+Edit `.env`:
 
 ```bash
-# Required: Your GCP Project ID
+# Use Vertex AI (default if not set)
+GEMINI_USE_VERTEX_AI=true
+
+# Project ID (optional if using gcloud config)
+# Will auto-detect from: gcloud config get-value core/project
 GCP_PROJECT=your-gcp-project-id
 
 # Optional: GCP region (default: global)
 GCP_LOCATION=global
+```
+
+**Note**: If `GCP_PROJECT` is not set via environment variable or `--project` flag, it will automatically use the project from your gcloud configuration.
+
+### Option 2: Gemini API Backend
+
+#### 1. Get API Key
+
+Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+
+#### 2. Environment Configuration
+
+Create a `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```bash
+# Use Gemini API instead of Vertex AI
+GEMINI_USE_VERTEX_AI=false
+
+# Required: Your Gemini API key
+GEMINI_API_KEY=your-api-key-here
 ```
 
 ## Usage

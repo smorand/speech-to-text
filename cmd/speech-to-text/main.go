@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"speech-to-text/internal/transcriber"
@@ -48,6 +51,16 @@ func getEnvDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
+// getGCloudProject retrieves the current GCP project from gcloud config
+func getGCloudProject() string {
+	cmd := exec.Command("gcloud", "config", "get-value", "core/project")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
 // logStep logs a step with timestamp to stderr
 func logStep(message string) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
@@ -57,11 +70,12 @@ func logStep(message string) {
 // parseFlags parses command-line flags and returns configuration
 func parseFlags() (transcriber.Config, string) {
 	var (
-		location    = flag.String("location", getEnvDefault("GCP_LOCATION", "global"), "GCP location")
+		apiKey      = flag.String("api-key", os.Getenv("GEMINI_API_KEY"), "Gemini API key (for non-Vertex AI)")
+		location    = flag.String("location", getEnvDefault("GCP_LOCATION", "global"), "GCP location (Vertex AI only)")
 		meetingName = flag.String("m", "", "Meeting name for the title")
 		modelName   = flag.String("model", "gemini-2.5-flash", "Gemini model name")
 		output      = flag.String("o", "", "Output file path (markdown format)")
-		projectID   = flag.String("project", os.Getenv("GCP_PROJECT"), "GCP project ID")
+		projectID   = flag.String("project", "", "GCP project ID (Vertex AI only)")
 	)
 
 	flag.Parse()
@@ -73,18 +87,46 @@ func parseFlags() (transcriber.Config, string) {
 		os.Exit(1)
 	}
 
+	// Determine if we should use Vertex AI
+	useVertexAI := true
+	if envValue := os.Getenv("GEMINI_USE_VERTEX_AI"); envValue != "" {
+		var err error
+		useVertexAI, err = strconv.ParseBool(envValue)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Invalid GEMINI_USE_VERTEX_AI value '%s', defaulting to false\n", envValue)
+			useVertexAI = false
+		}
+	}
+
+	// Resolve project ID: CLI flag > ENV var > gcloud config
+	resolvedProjectID := *projectID
+	if resolvedProjectID == "" {
+		resolvedProjectID = os.Getenv("GCP_PROJECT")
+	}
+	if resolvedProjectID == "" && useVertexAI {
+		resolvedProjectID = getGCloudProject()
+	}
+
 	return transcriber.Config{
+		APIKey:      *apiKey,
 		Location:    *location,
 		MeetingName: *meetingName,
 		ModelName:   *modelName,
-		ProjectID:   *projectID,
+		ProjectID:   resolvedProjectID,
+		UseVertexAI: useVertexAI,
 	}, *output
 }
 
 // validateConfig validates the configuration
 func validateConfig(cfg transcriber.Config) error {
-	if cfg.ProjectID == "" {
-		return fmt.Errorf("GCP_PROJECT must be set in .env or passed via --project")
+	if cfg.UseVertexAI {
+		if cfg.ProjectID == "" {
+			return fmt.Errorf("GCP_PROJECT must be set in .env or passed via --project when using Vertex AI")
+		}
+	} else {
+		if cfg.APIKey == "" {
+			return fmt.Errorf("GEMINI_API_KEY must be set in .env or passed via --api-key when GEMINI_USE_VERTEX_AI is false")
+		}
 	}
 	return nil
 }
