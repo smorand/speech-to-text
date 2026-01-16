@@ -43,11 +43,6 @@ resource "google_cloud_run_v2_service" "mcp_server" {
       }
 
       env {
-        name  = "PORT"
-        value = "8080"
-      }
-
-      env {
         name  = "PROJECT_ID"
         value = local.project_id
       }

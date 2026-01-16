@@ -468,5 +468,5 @@
   - Cloud Run service is running
   - Health endpoint responds
   - MCP endpoint is accessible (with auth)
-  passes: false
+  passes: true
 
