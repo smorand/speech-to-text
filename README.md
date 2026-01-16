@@ -133,14 +133,51 @@ speech-to-text/
 ├── internal/
 │   ├── audio/
 │   │   └── processor.go     # Audio utilities (MIME types)
+│   ├── mcp/
+│   │   ├── server.go        # MCP server structure
+│   │   └── oauth2.go        # OAuth2 authorization server
 │   └── processor/
 │       └── processor.go     # Gemini processing
+├── pkg/
+│   └── auth/
+│       └── auth.go          # API key injection via context
 ├── bin/                     # Compiled binaries
 ├── go.mod                   # Go module definition
 ├── Makefile                 # Build automation
 ├── README.md                # This file
 ├── CLAUDE.md                # AI interaction guidelines
 └── .env                     # Local configuration (gitignored)
+```
+
+## API Key Management
+
+The `pkg/auth` package provides flexible API key management with context injection:
+
+### Priority Order
+
+1. **Context injection** - Use `auth.WithAPIKey(ctx, key)` for per-request keys
+2. **Environment variable** - `GEMINI_API_KEY`
+3. **Credential file** - `~/.credentials/google_claude_np_api_key`
+4. **Secret Manager** - For Cloud Run deployments (with caching)
+
+### Usage
+
+```go
+import "speech-to-text/pkg/auth"
+
+// Option 1: Let it auto-detect from env/file
+key, err := auth.GetAPIKey(ctx)
+
+// Option 2: Inject key for a specific request
+ctx = auth.WithAPIKey(ctx, "your-api-key")
+key, err := auth.GetAPIKey(ctx)
+
+// Option 3: With Secret Manager support (for Cloud Run)
+cfg := &auth.SecretManagerConfig{
+    ProjectID:  "your-project",
+    SecretName: "gemini-api-key",
+}
+key, err := auth.GetAPIKeyWithSecretManager(ctx, cfg)
 ```
 
 ## Logging

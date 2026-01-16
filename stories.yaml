@@ -87,7 +87,7 @@
   - GetAPIKey retrieves key from context
   - GetAPIKey falls back to env var when no context
   - API key is cached after first Secret Manager load
-  passes: false
+  passes: true
 - id: US-00003
   title: Implement transcription MCP tool
   priority: 3
