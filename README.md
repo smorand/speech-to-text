@@ -126,15 +126,42 @@ API Options:
 
 ## MCP Server
 
-The speech-to-text tool also includes an MCP (Model Context Protocol) server for remote audio transcription, enabling AI assistants like Claude to transcribe audio files.
+The speech-to-text tool includes an MCP (Model Context Protocol) server for remote audio transcription, enabling AI assistants like Claude to transcribe audio files via a secure API.
+
+### MCP Server Overview
+
+The MCP server provides a remote API for audio transcription, deployed on Google Cloud Run with OAuth2 authentication.
+
+```
+┌────────────────┐     ┌──────────────────┐     ┌─────────────────────┐
+│  MCP Client    │────▶│  OAuth2 Server   │────▶│  MCP Server         │
+│  (Claude Code) │     │  - RFC 9728/8414 │     │  - ping tool        │
+└────────────────┘     │  - PKCE support  │     │  - transcribe_audio │
+                       └──────────────────┘     └──────────┬──────────┘
+                                                           │
+                                                           ▼
+                                                  ┌────────────────┐
+                                                  │ Gemini API     │
+                                                  └────────────────┘
+```
 
 ### Available MCP Tools
 
 #### `ping`
 Test connectivity with the MCP server.
 
+**Input:** None
+
+**Output:**
+```json
+{
+  "message": "pong",
+  "time": "2025-01-16T10:30:00Z"
+}
+```
+
 #### `transcribe_audio`
-Transcribe audio recording to structured meeting minutes in markdown format.
+Transcribe audio recording to structured meeting minutes in markdown format. Identifies speakers, preserves original language, and formats as attendees list followed by verbatim speaker-attributed transcript.
 
 **Input Parameters:**
 | Parameter | Required | Description |
@@ -145,16 +172,118 @@ Transcribe audio recording to structured meeting minutes in markdown format.
 | `context` | No | Optional additional context (participants, meeting type, etc.) |
 | `instructions` | No | Optional custom instructions for transcription processing |
 
+**Supported Audio Formats:**
+- `audio/mpeg`, `audio/mp3` (MP3)
+- `audio/wav`, `audio/wave`, `audio/x-wav` (WAV)
+- `audio/m4a`, `audio/x-m4a`, `audio/mp4` (M4A)
+- `audio/aac` (AAC)
+- `audio/ogg` (OGG)
+- `audio/flac`, `audio/x-flac` (FLAC)
+- `audio/webm`, `video/webm` (WebM)
+- `audio/aiff`, `audio/x-aiff` (AIFF)
+
 **Output:**
-- `minutes`: Formatted meeting minutes in markdown format
+```json
+{
+  "minutes": "# Meeting Title\n\n## Attendees\n- Speaker 1\n- Speaker 2\n\n## Minutes\n..."
+}
+```
 
-### Authentication
+### Authentication Flow
 
-The MCP server uses OAuth2 with PKCE support (RFC 2.1) for authentication:
-- RFC 9728 Protected Resource Metadata
-- RFC 8414 Authorization Server Metadata
-- RFC 7591 Dynamic Client Registration
-- Bearer token authentication for MCP requests
+The MCP server implements OAuth 2.1 with PKCE support for secure authentication:
+
+```
+1. Discovery:       GET /.well-known/oauth-protected-resource
+                         ↓
+2. Metadata:        GET /.well-known/oauth-authorization-server
+                         ↓
+3. Registration:    POST /oauth/register (Dynamic Client Registration)
+                         ↓
+4. Authorization:   GET /oauth/authorize?client_id=xxx&redirect_uri=xxx
+                         &response_type=code&code_challenge=xxx&code_challenge_method=S256
+                         ↓
+5. User Approval:   User clicks "Approve" on authorization page
+                         ↓
+6. Token Exchange:  POST /oauth/token (exchange code for access token)
+                         ↓
+7. API Access:      Bearer token in Authorization header for MCP requests
+```
+
+**Supported Standards:**
+- RFC 9728: Protected Resource Metadata
+- RFC 8414: Authorization Server Metadata
+- RFC 7591: Dynamic Client Registration
+- RFC 7636: PKCE (S256 method)
+- OAuth 2.1: Modern OAuth best practices
+
+**Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/.well-known/oauth-protected-resource` | GET | Protected resource metadata |
+| `/.well-known/oauth-authorization-server` | GET | Authorization server metadata |
+| `/oauth/register` | POST | Dynamic client registration |
+| `/oauth/authorize` | GET | Authorization endpoint |
+| `/oauth/callback` | GET | Authorization callback |
+| `/oauth/token` | POST | Token exchange |
+| `/health` | GET | Health check (no auth required) |
+
+### Claude Code Configuration
+
+To use the MCP server with Claude Code, add the following to your Claude Code MCP settings:
+
+**Option 1: Global settings (settings.json)**
+```json
+{
+  "mcpServers": {
+    "speech-to-text": {
+      "url": "https://speech-to-text-mcp-<HASH>-<REGION>.a.run.app",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+**Option 2: Project-level (.mcp.json in project root)**
+```json
+{
+  "mcpServers": {
+    "speech-to-text": {
+      "url": "https://speech-to-text-mcp-<HASH>-<REGION>.a.run.app",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+Replace `<HASH>` and `<REGION>` with your actual Cloud Run service values (e.g., `abc123def-ew1`).
+
+**Getting the URL:**
+```bash
+# After deployment, get the Cloud Run URL:
+gcloud run services describe speech-to-text-mcp --region=europe-west1 --format='value(status.url)'
+```
+
+### MCP Server Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `HOST` | No | `0.0.0.0` | Server host address |
+| `PORT` | No | `8080` | Server port (Cloud Run provides this) |
+| `BASE_URL` | Yes | - | Public URL of the Cloud Run service |
+| `PROJECT_ID` | Yes | - | GCP project ID for Secret Manager |
+| `GEMINI_API_KEY_SECRET` | No | `scmstt-gemini-api-key` | Secret Manager secret name for Gemini API key |
+| `OAUTH_CREDENTIALS_SECRET` | No | `scmstt-oauth-creds` | Secret Manager secret name for OAuth credentials |
+
+### MCP Server Commands
+
+```bash
+# Print deployment instructions
+bin/speech-to-text mcp
+
+# Start the MCP server (used by Cloud Run)
+bin/speech-to-text serve
+```
 
 ## Project Structure
 

@@ -415,7 +415,7 @@
   - Deployment steps are documented
   - Tool schema is documented
   - Example configuration is provided
-  passes: false
+  passes: true
 - id: US-00011
   title: Update CLAUDE.md with MCP architecture
   priority: 11
