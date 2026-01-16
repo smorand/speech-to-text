@@ -439,7 +439,7 @@
   - CLAUDE.md reflects new architecture
   - New files are documented
   - Infrastructure section exists
-  passes: false
+  passes: true
 - id: US-00012
   title: Deploy infrastructure with init-deploy
   priority: 12
