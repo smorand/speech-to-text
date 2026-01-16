@@ -12,8 +12,9 @@ A Go-based audio transcription tool using Google Gemini for transcription and me
 
 ## Prerequisites
 
-- Go 1.21 or higher
+- Go 1.24 or higher
 - Google Gemini API key (or Vertex AI access)
+- Docker (for containerized deployment)
 
 ## Installation
 
@@ -187,6 +188,7 @@ speech-to-text/
 │   ├── workload-mcp.tf      # Cloud Run and Artifact Registry
 │   └── secrets.tf           # Secret Manager secrets
 ├── bin/                     # Compiled binaries
+├── Dockerfile               # Multi-stage Docker build for Cloud Run
 ├── config.yaml              # Infrastructure configuration
 ├── go.mod                   # Go module definition
 ├── Makefile                 # Build automation
@@ -194,6 +196,41 @@ speech-to-text/
 ├── CLAUDE.md                # AI interaction guidelines
 └── .env                     # Local configuration (gitignored)
 ```
+
+## Docker Deployment
+
+### Build and Run Locally
+
+```bash
+# Build Docker image (~20MB)
+make docker-build
+
+# Run locally for testing
+docker run -p 8080:8080 \
+  -e GEMINI_API_KEY=your-api-key \
+  speech-to-text-mcp:latest
+
+# Test health endpoint
+curl http://localhost:8080/health
+```
+
+### Deploy to Cloud Run
+
+```bash
+# Build and push to Artifact Registry
+make docker-push
+
+# Deploy to Cloud Run
+make cloud-run-deploy
+```
+
+### Dockerfile Features
+
+- **Multi-stage build**: Builds in Go 1.24-alpine, runs in distroless
+- **Small image size**: ~20MB final image
+- **Non-root user**: Runs as `nonroot` user for security
+- **Static binary**: CGO disabled, fully static linking
+- **Health check**: `/health` endpoint for Cloud Run probes
 
 ## Infrastructure
 
@@ -326,12 +363,13 @@ bin/speech-to-text meeting.mp3 -o minutes.md \
 ## Development
 
 ```bash
-make help      # Show all available make targets
-make build     # Build for current platform
-make build-all # Build for all platforms
-make fmt       # Format code
-make check     # Run checks
-make clean     # Clean build artifacts
+make help         # Show all available make targets
+make build        # Build for current platform
+make build-all    # Build for all platforms
+make docker-build # Build Docker image
+make fmt          # Format code
+make check        # Run checks
+make clean        # Clean build artifacts
 ```
 
 ## Author

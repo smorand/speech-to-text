@@ -388,7 +388,7 @@
   - docker build succeeds
   - Image runs and responds to health check
   - Image size is reasonable (<50MB)
-  passes: false
+  passes: true
 - id: US-00010
   title: Update README.md with MCP documentation
   priority: 10

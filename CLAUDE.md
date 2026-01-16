@@ -40,8 +40,9 @@
 
 ## Technology Stack
 
-- **Language**: Go 1.21+
+- **Language**: Go 1.24+
 - **Build System**: Go modules (go.mod)
+- **Container**: Multi-stage Docker build (distroless)
 - **Main Dependencies**:
   - `google.golang.org/genai` - Gemini SDK for Go
   - `github.com/joho/godotenv` - Environment configuration
@@ -84,6 +85,7 @@ speech-to-text/
 │   ├── workload-mcp.tf      # Cloud Run and Artifact Registry
 │   └── secrets.tf           # Secret Manager secrets
 ├── bin/                     # Compiled binaries (gitignored)
+├── Dockerfile               # Multi-stage Docker build for Cloud Run
 ├── config.yaml              # Infrastructure configuration
 ├── go.mod                   # Go module definition
 ├── go.sum                   # Dependency checksums
@@ -103,6 +105,9 @@ speech-to-text/
 - Configuration validation
 - Processor orchestration
 - Output handling (file or stdout)
+- Subcommands:
+  - `serve`: Start MCP HTTP server (for Cloud Run)
+  - `mcp`: Print deployment instructions
 
 ### Processor Package (internal/processor/processor.go)
 
@@ -220,6 +225,8 @@ API:
 make build              # Build binary
 make rebuild            # Clean and rebuild
 make build-all          # Build for all platforms
+make docker-build       # Build Docker image (~20MB)
+make docker-push        # Push to Artifact Registry
 ```
 
 ### Testing
@@ -316,6 +323,7 @@ terraform apply
 - Infrastructure config: `config.yaml`
 - Dependencies: `go.mod`
 - Build: `Makefile`
+- Container: `Dockerfile`
 
 ## Quick Reference
 
