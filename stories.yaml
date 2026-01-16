@@ -184,7 +184,7 @@
   - speech-to-text mcp exits with code 0
   - speech-to-text audio.mp3 still works as before
   - No regression on existing CLI functionality
-  passes: false
+  passes: true
 - id: US-00005
   title: Create Terraform init infrastructure
   priority: 5

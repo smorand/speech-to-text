@@ -17,6 +17,12 @@ import (
 func main() {
 	_ = godotenv.Load()
 
+	// Check for 'mcp' subcommand before parsing flags
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		printMCPInstructions()
+		os.Exit(0)
+	}
+
 	opts := parseFlags()
 
 	if err := validateConfig(opts); err != nil {
@@ -203,4 +209,75 @@ func writeOutput(outputFile, content, contentType string) {
 		fmt.Printf("=== %s ===\n", contentType)
 		fmt.Println(content)
 	}
+}
+
+// printMCPInstructions prints deployment instructions for the MCP server
+func printMCPInstructions() {
+	instructions := `
+Speech-to-Text MCP Server Deployment Instructions
+==================================================
+
+The MCP server allows Claude Code to transcribe audio files via a remote API.
+It requires deployment to Google Cloud Run with OAuth2 authentication.
+
+Cloud Run URL Format:
+---------------------
+https://speech-to-text-mcp-<HASH>-<REGION>.a.run.app
+
+Required Environment Variables:
+-------------------------------
+  HOST                       Server host (default: 0.0.0.0)
+  PORT                       Server port (default: 8080)
+  BASE_URL                   Public URL of the Cloud Run service
+  PROJECT_ID                 GCP project ID
+  ENVIRONMENT                Deployment environment (prd, dev)
+  GEMINI_API_KEY_SECRET      Secret Manager reference for Gemini API key
+  OAUTH_CREDENTIALS_SECRET   Secret Manager reference for OAuth credentials
+
+Required Secrets in Secret Manager:
+-----------------------------------
+1. gemini-api-key           Your Gemini API key
+2. oauth-credentials        OAuth2 client credentials (JSON format)
+
+Deployment Steps:
+-----------------
+1. Initialize infrastructure:
+   make init-plan
+   make init-deploy
+
+2. Generate backend configuration:
+   make update-backend
+
+3. Deploy application:
+   make docker-build
+   make docker-push
+   make plan
+   make deploy
+
+4. Verify deployment:
+   curl https://<YOUR_CLOUD_RUN_URL>/.well-known/oauth-authorization-server
+
+Claude Code MCP Configuration:
+------------------------------
+Add to your Claude Code settings (settings.json or .mcp.json):
+
+{
+  "mcpServers": {
+    "speech-to-text": {
+      "url": "https://speech-to-text-mcp-<HASH>-<REGION>.a.run.app/mcp",
+      "transport": "sse"
+    }
+  }
+}
+
+Available MCP Tools:
+--------------------
+- ping: Test connectivity with the MCP server
+- transcribe_audio: Transcribe audio to meeting minutes
+    Input: audioData (base64), audioFormat (MIME type), meetingName, context, instructions
+    Output: Markdown-formatted meeting minutes
+
+For more information, see README.md
+`
+	fmt.Print(instructions)
 }
