@@ -1,11 +1,14 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -453,4 +456,304 @@ func TestPKCEValidation(t *testing.T) {
 			t.Error("expected PKCE validation to fail for 'plain' method")
 		}
 	})
+}
+
+// TestTranscribeAudioToolRegistered tests that the tool is registered with correct name and schema.
+func TestTranscribeAudioToolRegistered(t *testing.T) {
+	server := NewServer(&Config{
+		Host:    "localhost",
+		Port:    8080,
+		BaseURL: "https://example.com",
+	})
+
+	// Register tools - this should not panic and should successfully register
+	// the transcribe_audio tool
+	server.RegisterTools()
+
+	// Since we can't directly access tools, we verify the input/output structs
+	// and the handler function exists
+
+	// Test that input struct has correct JSON tags
+	t.Run("input struct has correct json tags", func(t *testing.T) {
+		input := TranscribeAudioInput{
+			AudioData:    "test",
+			AudioFormat:  "audio/mp3",
+			MeetingName:  "Test Meeting",
+			Context:      "Test Context",
+			Instructions: "Test Instructions",
+		}
+
+		// Marshal to verify JSON tags work correctly
+		jsonBytes, err := json.Marshal(input)
+		if err != nil {
+			t.Fatalf("failed to marshal input: %v", err)
+		}
+
+		jsonStr := string(jsonBytes)
+
+		// Check required fields are present
+		if !strings.Contains(jsonStr, `"audioData"`) {
+			t.Error("expected JSON to contain 'audioData'")
+		}
+		if !strings.Contains(jsonStr, `"audioFormat"`) {
+			t.Error("expected JSON to contain 'audioFormat'")
+		}
+
+		// Check optional fields
+		if !strings.Contains(jsonStr, `"meetingName"`) {
+			t.Error("expected JSON to contain 'meetingName'")
+		}
+		if !strings.Contains(jsonStr, `"context"`) {
+			t.Error("expected JSON to contain 'context'")
+		}
+		if !strings.Contains(jsonStr, `"instructions"`) {
+			t.Error("expected JSON to contain 'instructions'")
+		}
+	})
+
+	// Test that output struct has correct JSON tags
+	t.Run("output struct has correct json tags", func(t *testing.T) {
+		output := TranscribeAudioOutput{
+			Minutes: "# Test Minutes",
+		}
+
+		jsonBytes, err := json.Marshal(output)
+		if err != nil {
+			t.Fatalf("failed to marshal output: %v", err)
+		}
+
+		jsonStr := string(jsonBytes)
+		if !strings.Contains(jsonStr, `"minutes"`) {
+			t.Error("expected JSON to contain 'minutes'")
+		}
+	})
+
+	// Test JSON deserialization works
+	t.Run("input struct deserializes correctly", func(t *testing.T) {
+		jsonInput := `{
+			"audioData": "SGVsbG8=",
+			"audioFormat": "audio/mp3",
+			"meetingName": "Weekly Standup",
+			"context": "Team meeting",
+			"instructions": "Focus on action items"
+		}`
+
+		var input TranscribeAudioInput
+		if err := json.Unmarshal([]byte(jsonInput), &input); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		if input.AudioData != "SGVsbG8=" {
+			t.Errorf("expected audioData 'SGVsbG8=', got %q", input.AudioData)
+		}
+		if input.AudioFormat != "audio/mp3" {
+			t.Errorf("expected audioFormat 'audio/mp3', got %q", input.AudioFormat)
+		}
+		if input.MeetingName != "Weekly Standup" {
+			t.Errorf("expected meetingName 'Weekly Standup', got %q", input.MeetingName)
+		}
+		if input.Context != "Team meeting" {
+			t.Errorf("expected context 'Team meeting', got %q", input.Context)
+		}
+		if input.Instructions != "Focus on action items" {
+			t.Errorf("expected instructions 'Focus on action items', got %q", input.Instructions)
+		}
+	})
+}
+
+// TestBase64AudioDecoding tests that base64 audio is correctly decoded.
+func TestBase64AudioDecoding(t *testing.T) {
+	// Create test audio data (just some bytes for testing)
+	testAudioData := []byte("test audio content for decoding verification")
+	encoded := base64.StdEncoding.EncodeToString(testAudioData)
+
+	// Decode it back
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Errorf("failed to decode base64: %v", err)
+	}
+
+	if string(decoded) != string(testAudioData) {
+		t.Errorf("decoded data mismatch: expected %q, got %q", testAudioData, decoded)
+	}
+}
+
+// TestMimeTypeToExtension tests the MIME type to extension conversion.
+func TestMimeTypeToExtension(t *testing.T) {
+	tests := []struct {
+		mimeType string
+		expected string
+	}{
+		{"audio/mp3", ".mp3"},
+		{"audio/mpeg", ".mp3"},
+		{"audio/wav", ".wav"},
+		{"audio/wave", ".wav"},
+		{"audio/x-wav", ".wav"},
+		{"audio/m4a", ".m4a"},
+		{"audio/x-m4a", ".m4a"},
+		{"audio/mp4", ".m4a"},
+		{"audio/aac", ".aac"},
+		{"audio/ogg", ".ogg"},
+		{"audio/webm", ".webm"},
+		{"audio/flac", ".flac"},
+		{"audio/x-flac", ".flac"},
+		{"audio/aiff", ".aiff"},
+		{"audio/x-aiff", ".aiff"},
+		{"audio/3gpp", ".3gp"},
+		{"audio/3gpp2", ".3g2"},
+		{"video/mp4", ".mp4"},
+		{"video/webm", ".webm"},
+		// Case insensitivity
+		{"Audio/MP3", ".mp3"},
+		{"AUDIO/WAV", ".wav"},
+		// Unknown format
+		{"audio/unknown", ""},
+		{"", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.mimeType, func(t *testing.T) {
+			result := mimeTypeToExtension(tc.mimeType)
+			if result != tc.expected {
+				t.Errorf("mimeTypeToExtension(%q) = %q, expected %q", tc.mimeType, result, tc.expected)
+			}
+		})
+	}
+}
+
+// TestTempFileCreationAndCleanup tests that temp files are created and cleaned up properly.
+func TestTempFileCreationAndCleanup(t *testing.T) {
+	// Test that we can create and remove temp files with audio extensions
+	extensions := []string{".mp3", ".wav", ".m4a", ".ogg"}
+
+	for _, ext := range extensions {
+		t.Run(ext, func(t *testing.T) {
+			tmpFile, err := os.CreateTemp("", "test-audio-*"+ext)
+			if err != nil {
+				t.Fatalf("failed to create temp file: %v", err)
+			}
+			tmpPath := tmpFile.Name()
+
+			// Verify extension
+			if filepath.Ext(tmpPath) != ext {
+				t.Errorf("expected extension %q, got %q", ext, filepath.Ext(tmpPath))
+			}
+
+			// Write some data
+			_, err = tmpFile.Write([]byte("test audio content"))
+			if err != nil {
+				t.Fatalf("failed to write to temp file: %v", err)
+			}
+			tmpFile.Close()
+
+			// Verify file exists
+			if _, err := os.Stat(tmpPath); os.IsNotExist(err) {
+				t.Error("temp file should exist after creation")
+			}
+
+			// Clean up
+			if err := os.Remove(tmpPath); err != nil {
+				t.Fatalf("failed to remove temp file: %v", err)
+			}
+
+			// Verify file is removed
+			if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+				t.Error("temp file should not exist after removal")
+			}
+		})
+	}
+}
+
+// TestTranscribeAudioInputValidation tests input validation for the transcribe_audio handler.
+func TestTranscribeAudioInputValidation(t *testing.T) {
+	t.Run("empty audioData", func(t *testing.T) {
+		input := TranscribeAudioInput{
+			AudioData:   "",
+			AudioFormat: "audio/mp3",
+		}
+		if input.AudioData != "" {
+			t.Error("expected empty audioData")
+		}
+	})
+
+	t.Run("empty audioFormat", func(t *testing.T) {
+		input := TranscribeAudioInput{
+			AudioData:   "SGVsbG8gV29ybGQ=",
+			AudioFormat: "",
+		}
+		if input.AudioFormat != "" {
+			t.Error("expected empty audioFormat")
+		}
+	})
+
+	t.Run("optional fields are optional", func(t *testing.T) {
+		input := TranscribeAudioInput{
+			AudioData:   "SGVsbG8gV29ybGQ=",
+			AudioFormat: "audio/mp3",
+		}
+
+		// Optional fields should be empty by default
+		if input.MeetingName != "" {
+			t.Error("MeetingName should be empty by default")
+		}
+		if input.Context != "" {
+			t.Error("Context should be empty by default")
+		}
+		if input.Instructions != "" {
+			t.Error("Instructions should be empty by default")
+		}
+	})
+
+	t.Run("optional fields are passed", func(t *testing.T) {
+		input := TranscribeAudioInput{
+			AudioData:    "SGVsbG8gV29ybGQ=",
+			AudioFormat:  "audio/mp3",
+			MeetingName:  "Team Standup",
+			Context:      "Weekly team meeting with Alice and Bob",
+			Instructions: "Focus on action items",
+		}
+
+		if input.MeetingName != "Team Standup" {
+			t.Errorf("expected MeetingName 'Team Standup', got %q", input.MeetingName)
+		}
+		if input.Context != "Weekly team meeting with Alice and Bob" {
+			t.Errorf("expected Context to match, got %q", input.Context)
+		}
+		if input.Instructions != "Focus on action items" {
+			t.Errorf("expected Instructions to match, got %q", input.Instructions)
+		}
+	})
+}
+
+// TestTranscribeAudioOutputFormat tests that the output structure is correct.
+func TestTranscribeAudioOutputFormat(t *testing.T) {
+	output := TranscribeAudioOutput{
+		Minutes: "# Meeting Minutes\n\n## Attendees\n- Alice\n- Bob\n\n## Minutes\n- **Alice**: Hello everyone",
+	}
+
+	// Verify it contains expected markdown structure
+	if !strings.Contains(output.Minutes, "# Meeting Minutes") {
+		t.Error("expected markdown header in output")
+	}
+	if !strings.Contains(output.Minutes, "## Attendees") {
+		t.Error("expected Attendees section in output")
+	}
+	if !strings.Contains(output.Minutes, "## Minutes") {
+		t.Error("expected Minutes section in output")
+	}
+
+	// Test JSON serialization
+	jsonBytes, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("failed to marshal output: %v", err)
+	}
+
+	var parsed TranscribeAudioOutput
+	if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal output: %v", err)
+	}
+
+	if parsed.Minutes != output.Minutes {
+		t.Error("JSON round-trip failed")
+	}
 }

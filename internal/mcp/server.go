@@ -4,14 +4,19 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"speech-to-text/internal/processor"
+	"speech-to-text/pkg/auth"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -103,6 +108,30 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// TranscribeAudioInput defines the input schema for the transcribe_audio tool.
+type TranscribeAudioInput struct {
+	// AudioData is the base64-encoded audio file content.
+	AudioData string `json:"audioData" jsonschema:"Base64-encoded audio file content"`
+
+	// AudioFormat is the MIME type of the audio (e.g., audio/mp3, audio/wav).
+	AudioFormat string `json:"audioFormat" jsonschema:"MIME type of the audio (e.g. audio/mp3, audio/wav, audio/m4a)"`
+
+	// MeetingName is an optional meeting title.
+	MeetingName string `json:"meetingName,omitempty" jsonschema:"Optional meeting title or name"`
+
+	// Context is additional context about the meeting (participants, type, etc.).
+	Context string `json:"context,omitempty" jsonschema:"Optional additional context (participants, meeting type, etc.)"`
+
+	// Instructions are custom processing instructions.
+	Instructions string `json:"instructions,omitempty" jsonschema:"Optional custom instructions for transcription processing"`
+}
+
+// TranscribeAudioOutput defines the output schema for the transcribe_audio tool.
+type TranscribeAudioOutput struct {
+	// Minutes is the formatted meeting minutes in markdown.
+	Minutes string `json:"minutes"`
+}
+
 // RegisterTools registers all MCP tools with the server.
 func (s *Server) RegisterTools() {
 	// Register ping tool for connectivity testing
@@ -126,7 +155,137 @@ func (s *Server) RegisterTools() {
 		}, nil
 	})
 
-	// TODO: Register transcribe_audio tool in US-00003
+	// Register transcribe_audio tool for audio transcription
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "transcribe_audio",
+		Description: `Transcribe audio recording to structured meeting minutes in markdown format.
+Identifies speakers, preserves original language, formats as attendees list followed by verbatim speaker-attributed transcript.`,
+	}, s.handleTranscribeAudio)
+}
+
+// handleTranscribeAudio processes the transcribe_audio tool request.
+func (s *Server) handleTranscribeAudio(ctx context.Context, req *mcp.CallToolRequest, input TranscribeAudioInput) (
+	*mcp.CallToolResult,
+	TranscribeAudioOutput,
+	error,
+) {
+	log.Printf("Processing transcribe_audio request (format: %s)", input.AudioFormat)
+
+	// Validate required fields
+	if input.AudioData == "" {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("audioData is required")
+	}
+	if input.AudioFormat == "" {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("audioFormat is required")
+	}
+
+	// Decode base64 audio data
+	audioBytes, err := base64.StdEncoding.DecodeString(input.AudioData)
+	if err != nil {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("failed to decode base64 audio data: %w", err)
+	}
+
+	log.Printf("Decoded audio: %.2f MB", float64(len(audioBytes))/(1024*1024))
+
+	// Determine file extension from MIME type
+	ext := mimeTypeToExtension(input.AudioFormat)
+	if ext == "" {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("unsupported audio format: %s", input.AudioFormat)
+	}
+
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "transcribe-*"+ext)
+	if err != nil {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	// Ensure cleanup
+	defer func() {
+		tmpFile.Close()
+		if err := os.Remove(tmpPath); err != nil {
+			log.Printf("Warning: failed to remove temp file %s: %v", tmpPath, err)
+		}
+	}()
+
+	// Write audio data to temp file
+	if _, err := tmpFile.Write(audioBytes); err != nil {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("failed to write audio to temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Get API key from context or environment
+	apiKey, err := auth.GetAPIKeyWithSecretManager(ctx, &auth.SecretManagerConfig{
+		ProjectID:  s.config.SecretProject,
+		SecretName: s.config.SecretName,
+	})
+	if err != nil {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("failed to get API key: %w", err)
+	}
+
+	// Create processor configuration
+	procCfg := processor.Config{
+		APIKey:         apiKey,
+		MeetingName:    input.MeetingName,
+		Context:        input.Context,
+		Instructions:   input.Instructions,
+		RequestTimeout: 600, // 10 minutes for large audio files
+	}
+
+	// Create processor
+	proc, err := processor.New(ctx, procCfg, func(msg string) {
+		log.Printf("[Processor] %s", msg)
+	})
+	if err != nil {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("failed to create processor: %w", err)
+	}
+	defer proc.Close()
+
+	// Process the audio file
+	minutes, err := proc.Process(ctx, tmpPath)
+	if err != nil {
+		return nil, TranscribeAudioOutput{}, fmt.Errorf("failed to process audio: %w", err)
+	}
+
+	log.Printf("Transcription completed successfully")
+
+	return nil, TranscribeAudioOutput{Minutes: minutes}, nil
+}
+
+// mimeTypeToExtension converts a MIME type to a file extension.
+func mimeTypeToExtension(mimeType string) string {
+	// Normalize MIME type (case insensitive)
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+
+	extensions := map[string]string{
+		"audio/mpeg":       ".mp3",
+		"audio/mp3":        ".mp3",
+		"audio/wav":        ".wav",
+		"audio/wave":       ".wav",
+		"audio/x-wav":      ".wav",
+		"audio/m4a":        ".m4a",
+		"audio/x-m4a":      ".m4a",
+		"audio/mp4":        ".m4a",
+		"audio/aac":        ".aac",
+		"audio/ogg":        ".ogg",
+		"audio/webm":       ".webm",
+		"audio/flac":       ".flac",
+		"audio/x-flac":     ".flac",
+		"audio/aiff":       ".aiff",
+		"audio/x-aiff":     ".aiff",
+		"audio/3gpp":       ".3gp",
+		"audio/3gpp2":      ".3g2",
+		"video/mp4":        ".mp4",
+		"video/webm":       ".webm",
+		filepath.Ext(""): "", // catch empty
+	}
+
+	if ext, ok := extensions[mimeType]; ok {
+		return ext
+	}
+	return ""
 }
 
 // Run starts the HTTP server and blocks until shutdown.

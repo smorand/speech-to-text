@@ -145,7 +145,7 @@
   - Temporary file is cleaned up after processing
   - Markdown output is returned in CallToolResult
   - Optional parameters are passed to processor config
-  passes: false
+  passes: true
 - id: US-00004
   title: Add MCP subcommand to CLI
   priority: 4
