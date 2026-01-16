@@ -181,6 +181,11 @@ speech-to-text/
 │   ├── state-backend.tf     # GCS bucket for tfstate
 │   ├── service-accounts.tf  # Cloud Run service account
 │   └── services.tf          # Enable required GCP APIs
+├── iac/                     # Terraform application infrastructure
+│   ├── provider.tf.template # Provider template with BACKEND_PLACEHOLDER
+│   ├── local.tf             # Load config.yaml
+│   ├── workload-mcp.tf      # Cloud Run and Artifact Registry
+│   └── secrets.tf           # Secret Manager secrets
 ├── bin/                     # Compiled binaries
 ├── config.yaml              # Infrastructure configuration
 ├── go.mod                   # Go module definition
@@ -224,6 +229,30 @@ This creates:
 - GCS bucket for Terraform state
 - Cloud Run service account with Secret Manager access
 - Enables required GCP APIs
+
+### Terraform IAC (Application Infrastructure)
+
+The `iac/` directory creates application infrastructure:
+
+```bash
+# Generate provider.tf from template (after init-deploy)
+make update-backend
+
+cd iac
+terraform init
+terraform plan
+terraform apply
+```
+
+This creates:
+- Artifact Registry repository for Docker images
+- Cloud Run service with configured resources:
+  - CPU: 1, Memory: 512Mi
+  - Min instances: 0, Max instances: 3
+  - Max concurrent requests: 2
+- Secret Manager secrets (with placeholders - update manually):
+  - OAuth credentials
+  - Gemini API key
 
 ## API Key Management
 

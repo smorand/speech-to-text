@@ -282,7 +282,7 @@
   - Artifact Registry repository is created
   - Secrets are created in Secret Manager
   - Service account has access to secrets
-  passes: false
+  passes: true
 - id: US-00007
   title: Create config.yaml for deployment
   priority: 7

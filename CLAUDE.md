@@ -77,6 +77,12 @@ speech-to-text/
 │   ├── state-backend.tf     # GCS bucket for tfstate
 │   ├── service-accounts.tf  # Cloud Run service account
 │   └── services.tf          # Enable required GCP APIs
+├── iac/                     # Terraform application infrastructure
+│   ├── provider.tf.template # Provider template with BACKEND_PLACEHOLDER
+│   ├── provider.tf          # Generated provider (gitignored)
+│   ├── local.tf             # Load config.yaml
+│   ├── workload-mcp.tf      # Cloud Run and Artifact Registry
+│   └── secrets.tf           # Secret Manager secrets
 ├── bin/                     # Compiled binaries (gitignored)
 ├── config.yaml              # Infrastructure configuration
 ├── go.mod                   # Go module definition
@@ -241,7 +247,7 @@ bin/speech-to-text audio.mp3 -o minutes.md \
 Infrastructure is managed with Terraform in two directories:
 
 1. **init/**: One-time setup (state bucket, service accounts, APIs)
-2. **iac/**: Application infrastructure (Cloud Run, secrets) - TBD
+2. **iac/**: Application infrastructure (Cloud Run, secrets, Artifact Registry)
 
 ### init/ Directory
 
@@ -255,6 +261,19 @@ Creates foundational GCP resources:
   - `cloudresourcemanager.googleapis.com`
   - `iam.googleapis.com`
 
+### iac/ Directory
+
+Creates application infrastructure:
+- **provider.tf.template**: Provider with BACKEND_PLACEHOLDER (replaced by `make update-backend`)
+- **local.tf**: Loads config.yaml with Cloud Run and secrets configuration
+- **workload-mcp.tf**: Cloud Run service and Artifact Registry
+  - Cloud Run: CPU 1, Memory 512Mi, max 3 instances, 2 concurrent requests
+  - Artifact Registry: Docker repository for container images
+  - Health check probes configured
+- **secrets.tf**: Secret Manager secrets for OAuth and Gemini API key
+  - Secrets created with placeholder values (update manually)
+  - IAM bindings for Cloud Run service account access
+
 ### config.yaml
 
 Single source of truth for infrastructure configuration:
@@ -262,6 +281,8 @@ Single source of truth for infrastructure configuration:
 - `gcp.project_id`: GCP project ID
 - `gcp.location`: Region (`europe-west1`)
 - `gcp.services`: APIs to enable
+- `gcp.resources.cloud_run`: Cloud Run configuration
+- `gcp.resources.artifact_registry`: Artifact Registry configuration
 - `secrets`: Secret names for OAuth and Gemini API key
 
 ### Terraform Commands
@@ -290,6 +311,9 @@ terraform apply
 - MCP tests: `internal/mcp/server_test.go`
 - API key auth: `pkg/auth/auth.go`
 - Auth tests: `pkg/auth/auth_test.go`
+- Init Terraform: `init/*.tf`
+- IAC Terraform: `iac/*.tf`
+- Infrastructure config: `config.yaml`
 - Dependencies: `go.mod`
 - Build: `Makefile`
 
