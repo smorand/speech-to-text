@@ -292,6 +292,38 @@ Single source of truth for infrastructure configuration:
 - `gcp.resources.artifact_registry`: Artifact Registry configuration
 - `secrets`: Secret names for OAuth and Gemini API key
 
+### Deployment Workflow
+
+**Full deployment (first time):**
+
+```bash
+# 1. Initialize foundational resources
+make init-plan          # Review state bucket, service accounts, APIs
+make init-deploy        # Creates GCS bucket, service account, enables APIs
+
+# 2. Update secrets in Secret Manager (manual step)
+# Upload OAuth credentials and Gemini API key to:
+# - scmstt-oauth-creds
+# - scmstt-gemini-api-key
+
+# 3. Deploy application infrastructure
+make plan               # Review Cloud Run, Artifact Registry, secrets
+make deploy             # Creates all application resources
+
+# 4. Build and push Docker image
+make docker-build       # Build container image (~20MB)
+make docker-push        # Push to Artifact Registry
+
+# 5. Full Cloud Run deployment
+make cloud-run-deploy   # Build + push + deploy to Cloud Run
+```
+
+**Subsequent deployments:**
+
+```bash
+make docker-build && make cloud-run-deploy
+```
+
 ### Terraform Commands
 
 ```bash
@@ -343,6 +375,14 @@ bin/speech-to-text audio.mp3 -o minutes.md \
   --context "Weekly standup" \
   -i "Extract action items"
 ```
+
+## Documentation Index
+
+Detailed documentation is available in `.agent_docs/`:
+
+| File | Description |
+|------|-------------|
+| [mcp-server.md](.agent_docs/mcp-server.md) | MCP server implementation details, OAuth2 flow, tools specification |
 
 ## Notes for AI
 
