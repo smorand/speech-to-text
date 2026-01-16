@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	mcpserver "speech-to-text/internal/mcp"
 	"speech-to-text/internal/processor"
 
 	"github.com/joho/godotenv"
@@ -17,10 +18,16 @@ import (
 func main() {
 	_ = godotenv.Load()
 
-	// Check for 'mcp' subcommand before parsing flags
-	if len(os.Args) > 1 && os.Args[1] == "mcp" {
-		printMCPInstructions()
-		os.Exit(0)
+	// Check for subcommands before parsing flags
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "mcp":
+			printMCPInstructions()
+			os.Exit(0)
+		case "serve":
+			runMCPServer()
+			return
+		}
 	}
 
 	opts := parseFlags()
@@ -280,4 +287,52 @@ Available MCP Tools:
 For more information, see README.md
 `
 	fmt.Print(instructions)
+}
+
+// runMCPServer starts the MCP HTTP server for Cloud Run deployment.
+func runMCPServer() {
+	// Get configuration from environment variables
+	host := getEnvDefault("HOST", "0.0.0.0")
+	port := 8080
+	if portStr := os.Getenv("PORT"); portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil {
+			port = p
+		}
+	}
+	baseURL := os.Getenv("BASE_URL")
+	if baseURL == "" {
+		// Default to localhost for local development
+		baseURL = fmt.Sprintf("http://%s:%d", host, port)
+	}
+
+	// Secret Manager configuration
+	secretProject := os.Getenv("PROJECT_ID")
+	geminiSecretName := getEnvDefault("GEMINI_API_KEY_SECRET", "scmstt-gemini-api-key")
+	oauthSecretName := getEnvDefault("OAUTH_CREDENTIALS_SECRET", "scmstt-oauth-creds")
+
+	cfg := &mcpserver.Config{
+		Host:           host,
+		Port:           port,
+		BaseURL:        baseURL,
+		SecretProject:  secretProject,
+		SecretName:     geminiSecretName,
+		CredentialFile: "", // Use Secret Manager in Cloud Run
+	}
+
+	// Log configuration (without secrets)
+	log.Printf("Starting MCP server...")
+	log.Printf("  Host: %s", host)
+	log.Printf("  Port: %d", port)
+	log.Printf("  Base URL: %s", baseURL)
+	log.Printf("  Project: %s", secretProject)
+	log.Printf("  Gemini Secret: %s", geminiSecretName)
+	log.Printf("  OAuth Secret: %s", oauthSecretName)
+
+	// Create and run the server
+	server := mcpserver.NewServer(cfg)
+
+	ctx := context.Background()
+	if err := server.Run(ctx); err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
 }
