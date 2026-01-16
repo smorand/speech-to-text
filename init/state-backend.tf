@@ -38,7 +38,7 @@ output "backend_config" {
   value = <<-EOT
     backend "gcs" {
       bucket = "${google_storage_bucket.terraform_state.name}"
-      prefix = "terraform/state"
+      prefix = "terraform/${local.prefix}/state"
     }
   EOT
 }
