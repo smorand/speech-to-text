@@ -67,6 +67,10 @@ speech-to-text/
 │   │   └── oauth2.go        # OAuth2 authorization server
 │   └── processor/
 │       └── processor.go     # Gemini processing
+├── pkg/
+│   └── auth/
+│       ├── auth.go          # API key context injection
+│       └── auth_test.go     # Auth package tests
 ├── bin/                     # Compiled binaries (gitignored)
 ├── go.mod                   # Go module definition
 ├── go.sum                   # Dependency checksums
@@ -117,6 +121,21 @@ speech-to-text/
   - Dynamic client registration (RFC 7591)
   - PKCE support (S256)
   - In-memory token store with expiration cleanup
+
+### Auth Package (pkg/auth/auth.go)
+
+- **Purpose**: Gemini API key injection via context
+- **Key Functions**:
+  - `WithAPIKey(ctx, key)`: Injects API key into context
+  - `GetAPIKey(ctx)`: Retrieves key (context → env → file)
+  - `GetAPIKeyWithSecretManager(ctx, cfg)`: With Secret Manager support
+  - `IsCached()`: Check if key is cached from Secret Manager
+  - `ClearCache()`: Clear cached key
+- **Priority Order**:
+  1. Context injection (per-request)
+  2. `GEMINI_API_KEY` environment variable
+  3. `~/.credentials/google_claude_np_api_key` file
+  4. Secret Manager (Cloud Run, with caching)
 
 ## Environment Configuration
 
@@ -207,6 +226,8 @@ bin/speech-to-text audio.mp3 -o minutes.md \
 - MCP server: `internal/mcp/server.go`
 - OAuth2 server: `internal/mcp/oauth2.go`
 - MCP tests: `internal/mcp/server_test.go`
+- API key auth: `pkg/auth/auth.go`
+- Auth tests: `pkg/auth/auth_test.go`
 - Dependencies: `go.mod`
 - Build: `Makefile`
 
