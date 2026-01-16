@@ -1,4 +1,4 @@
-.PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help
+.PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help docker-build docker-push cloud-run-deploy plan deploy undeploy init-plan init-deploy init-destroy terraform-help check-init update-backend
 
 # Binary name derived from current directory
 BINARY_NAME=$(shell basename $$(pwd))
@@ -290,3 +290,207 @@ help:
 	@echo "  -darwin-arm64  - macOS (Apple Silicon)"
 	@echo ""
 	@echo "The launcher script ($(BINARY_NAME).sh) automatically selects the right binary."
+	@echo ""
+	@echo "Docker/Cloud Run targets:"
+	@echo "  docker-build      - Build container image locally"
+	@echo "  docker-push       - Push container to Artifact Registry"
+	@echo "  cloud-run-deploy  - Deploy to Cloud Run (build + push + deploy)"
+	@echo ""
+	@echo "Terraform targets (run 'make terraform-help' for details):"
+	@echo "  init-plan         - Plan initialization resources"
+	@echo "  init-deploy       - Deploy initialization resources"
+	@echo "  plan              - Plan main infrastructure"
+	@echo "  deploy            - Deploy main infrastructure"
+
+
+# ============================================
+# Docker and Cloud Run Deployment
+# ============================================
+
+# Docker image configuration
+DOCKER_IMAGE_NAME=$(BINARY_NAME)-mcp
+DOCKER_TAG ?= latest
+
+# GCP configuration (loaded from config.yaml or override with env vars)
+GCP_PROJECT ?= $(shell grep 'project_id:' config.yaml 2>/dev/null | head -1 | awk '{print $$2}')
+GCP_REGION ?= $(shell grep 'region:' config.yaml 2>/dev/null | head -1 | awk '{print $$2}')
+
+# Artifact Registry URL
+REGISTRY_URL=$(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/$(BINARY_NAME)
+
+# Full image path in Artifact Registry
+FULL_IMAGE_PATH=$(REGISTRY_URL)/$(DOCKER_IMAGE_NAME):$(DOCKER_TAG)
+
+# Build Docker image locally
+docker-build:
+	@echo "Building Docker image: $(DOCKER_IMAGE_NAME):$(DOCKER_TAG)..."
+	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_TAG) .
+	@echo "Docker image built: $(DOCKER_IMAGE_NAME):$(DOCKER_TAG)"
+	@echo ""
+	@echo "To run locally:"
+	@echo "  docker run -p 8080:8080 $(DOCKER_IMAGE_NAME):$(DOCKER_TAG)"
+
+# Push Docker image to Artifact Registry
+docker-push: docker-build
+	@echo "Pushing to Artifact Registry..."
+	@if [ -z "$(GCP_PROJECT)" ]; then \
+		echo "Error: GCP_PROJECT not set. Set it via env var or in config.yaml"; \
+		exit 1; \
+	fi
+	@echo "   Registry: $(REGISTRY_URL)"
+	@echo "   Image: $(FULL_IMAGE_PATH)"
+	@echo ""
+	@echo "Configuring Docker authentication..."
+	gcloud auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
+	@echo ""
+	@echo "Tagging image..."
+	docker tag $(DOCKER_IMAGE_NAME):$(DOCKER_TAG) $(FULL_IMAGE_PATH)
+	@echo ""
+	@echo "Pushing image..."
+	docker push $(FULL_IMAGE_PATH)
+	@echo ""
+	@echo "Image pushed: $(FULL_IMAGE_PATH)"
+
+# Deploy to Cloud Run
+cloud-run-deploy: docker-push
+	@echo "Deploying to Cloud Run..."
+	@if [ -z "$(GCP_PROJECT)" ]; then \
+		echo "Error: GCP_PROJECT not set. Set it via env var or in config.yaml"; \
+		exit 1; \
+	fi
+	gcloud run deploy $(BINARY_NAME)-mcp \
+		--image $(FULL_IMAGE_PATH) \
+		--region $(GCP_REGION) \
+		--project $(GCP_PROJECT) \
+		--platform managed \
+		--allow-unauthenticated \
+		--set-env-vars="PROJECT_ID=$(GCP_PROJECT)" \
+		--service-account="scmstt-cloudrun-prd@$(GCP_PROJECT).iam.gserviceaccount.com" \
+		--quiet
+	@echo ""
+	@echo "Deployment complete!"
+	@echo ""
+	@echo "Service URL:"
+	@gcloud run services describe $(BINARY_NAME)-mcp --region $(GCP_REGION) --project $(GCP_PROJECT) --format='value(status.url)'
+
+
+# ============================================
+# Terraform Infrastructure Management
+# ============================================
+
+# Check if init has been deployed (by checking if state backend exists)
+check-init:
+	@if [ ! -d "init/.terraform" ]; then \
+		echo ""; \
+		echo "ERROR: Initialization not completed!"; \
+		echo ""; \
+		echo "You must run initialization BEFORE deploying main infrastructure:"; \
+		echo ""; \
+		echo "  1. make init-plan       # Review what will be created"; \
+		echo "  2. make init-deploy     # Deploy state backend & service accounts"; \
+		echo "  3. make plan            # Then plan main infrastructure"; \
+		echo "  4. make deploy          # Finally deploy main infrastructure"; \
+		echo ""; \
+		echo "The init step creates:"; \
+		echo "  - Terraform state backend (GCS bucket)"; \
+		echo "  - Service accounts / IAM roles"; \
+		echo "  - API enablement"; \
+		echo ""; \
+		exit 1; \
+	fi
+
+# Update iac/provider.tf with backend configuration from init/
+update-backend:
+	@echo "Updating iac/provider.tf with backend configuration..."
+	@if [ ! -d "init/.terraform" ]; then \
+		echo "Error: init/.terraform not found. Run 'make init-deploy' first."; \
+		exit 1; \
+	fi
+	@if [ ! -f "iac/provider.tf.template" ]; then \
+		echo "Error: iac/provider.tf.template not found."; \
+		exit 1; \
+	fi
+	@if [ -f "iac/provider.tf" ] && grep -q 'backend "' iac/provider.tf && ! grep -q 'BACKEND_PLACEHOLDER' iac/provider.tf; then \
+		echo "Warning: iac/provider.tf already has a backend configured. Skipping."; \
+	else \
+		BACKEND_CONFIG=$$(cd init && terraform output -raw backend_config 2>/dev/null); \
+		if [ -z "$$BACKEND_CONFIG" ]; then \
+			echo "Error: Could not get backend_config from terraform output."; \
+			exit 1; \
+		fi; \
+		awk -v backend="$$BACKEND_CONFIG" ' \
+			/BACKEND_PLACEHOLDER/ { \
+				n = split(backend, lines, "\n"); \
+				for (i = 1; i <= n; i++) { \
+					gsub(/^[ \t]+|[ \t]+$$/, "", lines[i]); \
+					if (lines[i] != "") print "  " lines[i]; \
+				} \
+				next \
+			} \
+			{ print } \
+		' iac/provider.tf.template > iac/provider.tf; \
+		echo "Successfully updated iac/provider.tf"; \
+		echo ""; \
+		echo "Backend configuration:"; \
+		echo "$$BACKEND_CONFIG"; \
+	fi
+
+# IAC targets (main infrastructure)
+plan: check-init
+	@echo "Planning main infrastructure..."
+	cd iac && terraform init && terraform plan
+
+deploy: check-init
+	@echo "Deploying main infrastructure..."
+	cd iac && terraform init && terraform apply -auto-approve
+
+undeploy: check-init
+	@echo "Destroying main infrastructure..."
+	cd iac && terraform destroy -auto-approve
+
+# Init targets (backend, state, service accounts)
+init-plan:
+	@echo "Planning initialization..."
+	cd init && terraform init && terraform plan
+
+init-deploy:
+	@echo "Deploying initialization..."
+	cd init && terraform init && terraform apply -auto-approve
+	@$(MAKE) update-backend
+	@echo ""
+	@echo "Initialization complete!"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Run: make plan"
+	@echo "  2. Run: make deploy"
+
+init-destroy:
+	@echo "Destroying initialization resources..."
+	@echo "WARNING: This will destroy state backend and service accounts!"
+	@read -p "Are you sure? (yes/no): " answer && [ "$$answer" = "yes" ]
+	cd init && terraform destroy -auto-approve
+
+# Terraform help
+terraform-help:
+	@echo "Terraform Makefile Targets:"
+	@echo ""
+	@echo "Deployment Workflow (First Time):"
+	@echo "  1. make init-plan       - Plan initialization (state backend, service accounts)"
+	@echo "  2. make init-deploy     - Deploy initialization"
+	@echo "  3. make plan            - Plan main infrastructure"
+	@echo "  4. make deploy          - Deploy main infrastructure"
+	@echo ""
+	@echo "Main Infrastructure:"
+	@echo "  make plan               - Plan main infrastructure changes"
+	@echo "  make deploy             - Deploy main infrastructure"
+	@echo "  make undeploy           - Destroy main infrastructure"
+	@echo ""
+	@echo "Initialization (One-time Setup):"
+	@echo "  make init-plan          - Plan initialization resources"
+	@echo "  make init-deploy        - Deploy initialization resources"
+	@echo "  make init-destroy       - Destroy initialization (DANGEROUS!)"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  make update-backend     - Update iac/provider.tf with backend config"
+	@echo ""
+	@echo "Note: You must run 'make init-deploy' BEFORE running 'make deploy'"

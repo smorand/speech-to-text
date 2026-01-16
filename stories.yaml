@@ -355,7 +355,7 @@
   - make plan runs without error (after init-deploy)
   - make docker-build creates image
   - make docker-push pushes to Artifact Registry
-  passes: false
+  passes: true
 - id: US-00009
   title: Create Dockerfile for Cloud Run
   priority: 9
