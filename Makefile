@@ -1,4 +1,4 @@
-.PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help docker-build docker-push cloud-run-deploy plan deploy undeploy init-plan init-deploy init-destroy terraform-help check-init update-backend
+.PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help docker-auth docker-build plan deploy undeploy init-plan init-deploy init-destroy terraform-help check-init update-backend
 
 # Binary name derived from current directory
 BINARY_NAME=$(shell basename $$(pwd))
@@ -292,9 +292,8 @@ help:
 	@echo "The launcher script ($(BINARY_NAME).sh) automatically selects the right binary."
 	@echo ""
 	@echo "Docker/Cloud Run targets:"
-	@echo "  docker-build      - Build container image locally"
-	@echo "  docker-push       - Push container to Artifact Registry"
-	@echo "  cloud-run-deploy  - Deploy to Cloud Run (build + push + deploy)"
+	@echo "  docker-auth       - Configure Docker auth for Artifact Registry (one-time)"
+	@echo "  docker-build      - Build container image locally (for testing)"
 	@echo ""
 	@echo "Terraform targets (run 'make terraform-help' for details):"
 	@echo "  init-plan         - Plan initialization resources"
@@ -307,71 +306,27 @@ help:
 # Docker and Cloud Run Deployment
 # ============================================
 
-# Docker image configuration
-DOCKER_IMAGE_NAME=$(BINARY_NAME)-mcp
-DOCKER_TAG ?= latest
-
 # GCP configuration (loaded from config.yaml or override with env vars)
 GCP_PROJECT ?= $(shell grep 'project_id:' config.yaml 2>/dev/null | head -1 | awk '{print $$2}')
-GCP_REGION ?= $(shell grep 'region:' config.yaml 2>/dev/null | head -1 | awk '{print $$2}')
+GCP_REGION ?= $(shell grep 'location:' config.yaml 2>/dev/null | head -1 | awk '{print $$2}')
 
-# Artifact Registry URL
-REGISTRY_URL=$(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/$(BINARY_NAME)
+# Configure Docker authentication for Artifact Registry (one-time setup)
+# Run this once on a new machine before first deployment
+docker-auth:
+	@echo "Configuring Docker authentication for Artifact Registry..."
+	gcloud auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
+	@echo "Docker authentication configured."
+	@echo ""
+	@echo "This is a one-time setup. You can now run 'make deploy'."
 
-# Full image path in Artifact Registry
-FULL_IMAGE_PATH=$(REGISTRY_URL)/$(DOCKER_IMAGE_NAME):$(DOCKER_TAG)
-
-# Build Docker image locally
+# Build Docker image locally (for testing only)
+# NOTE: For production, use 'make deploy' which builds via Terraform
 docker-build:
-	@echo "Building Docker image: $(DOCKER_IMAGE_NAME):$(DOCKER_TAG)..."
-	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_TAG) .
-	@echo "Docker image built: $(DOCKER_IMAGE_NAME):$(DOCKER_TAG)"
+	@echo "Building Docker image locally for testing..."
+	docker build -t speech-to-text-mcp:local .
 	@echo ""
 	@echo "To run locally:"
-	@echo "  docker run -p 8080:8080 $(DOCKER_IMAGE_NAME):$(DOCKER_TAG)"
-
-# Push Docker image to Artifact Registry
-docker-push: docker-build
-	@echo "Pushing to Artifact Registry..."
-	@if [ -z "$(GCP_PROJECT)" ]; then \
-		echo "Error: GCP_PROJECT not set. Set it via env var or in config.yaml"; \
-		exit 1; \
-	fi
-	@echo "   Registry: $(REGISTRY_URL)"
-	@echo "   Image: $(FULL_IMAGE_PATH)"
-	@echo ""
-	@echo "Configuring Docker authentication..."
-	gcloud auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
-	@echo ""
-	@echo "Tagging image..."
-	docker tag $(DOCKER_IMAGE_NAME):$(DOCKER_TAG) $(FULL_IMAGE_PATH)
-	@echo ""
-	@echo "Pushing image..."
-	docker push $(FULL_IMAGE_PATH)
-	@echo ""
-	@echo "Image pushed: $(FULL_IMAGE_PATH)"
-
-# Deploy to Cloud Run
-cloud-run-deploy: docker-push
-	@echo "Deploying to Cloud Run..."
-	@if [ -z "$(GCP_PROJECT)" ]; then \
-		echo "Error: GCP_PROJECT not set. Set it via env var or in config.yaml"; \
-		exit 1; \
-	fi
-	gcloud run deploy $(BINARY_NAME)-mcp \
-		--image $(FULL_IMAGE_PATH) \
-		--region $(GCP_REGION) \
-		--project $(GCP_PROJECT) \
-		--platform managed \
-		--allow-unauthenticated \
-		--set-env-vars="PROJECT_ID=$(GCP_PROJECT)" \
-		--service-account="scmstt-cloudrun-prd@$(GCP_PROJECT).iam.gserviceaccount.com" \
-		--quiet
-	@echo ""
-	@echo "Deployment complete!"
-	@echo ""
-	@echo "Service URL:"
-	@gcloud run services describe $(BINARY_NAME)-mcp --region $(GCP_REGION) --project $(GCP_PROJECT) --format='value(status.url)'
+	@echo "  docker run -p 8080:8080 speech-to-text-mcp:local"
 
 
 # ============================================
