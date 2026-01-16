@@ -42,7 +42,7 @@
 
 - **Language**: Go 1.24+
 - **Build System**: Go modules (go.mod)
-- **Container**: Multi-stage Docker build (distroless)
+- **Container**: Multi-stage Docker build (distroless), managed via Terraform (kreuzwerker/docker)
 - **Main Dependencies**:
   - `google.golang.org/genai` - Gemini SDK for Go
   - `github.com/joho/godotenv` - Environment configuration
@@ -82,6 +82,7 @@ speech-to-text/
 │   ├── provider.tf.template # Provider template with BACKEND_PLACEHOLDER
 │   ├── provider.tf          # Generated provider (gitignored)
 │   ├── local.tf             # Load config.yaml
+│   ├── docker.tf            # Docker build and push (kreuzwerker/docker)
 │   ├── workload-mcp.tf      # Cloud Run and Artifact Registry
 │   └── secrets.tf           # Secret Manager secrets
 ├── bin/                     # Compiled binaries (gitignored)
@@ -225,8 +226,7 @@ API:
 make build              # Build binary
 make rebuild            # Clean and rebuild
 make build-all          # Build for all platforms
-make docker-build       # Build Docker image (~20MB)
-make docker-push        # Push to Artifact Registry
+make docker-build       # Build Docker image locally (for testing)
 ```
 
 ### Testing
@@ -272,11 +272,16 @@ Creates foundational GCP resources:
 
 Creates application infrastructure:
 - **provider.tf.template**: Provider with BACKEND_PLACEHOLDER (replaced by `make update-backend`)
+  - Includes `kreuzwerker/docker` provider for Docker image management
 - **local.tf**: Loads config.yaml with Cloud Run and secrets configuration
+- **docker.tf**: Docker image build and push (via kreuzwerker/docker provider)
+  - `docker_image`: Builds locally with file hash triggers (auto-rebuild on source changes)
+  - `docker_registry_image`: Pushes to Artifact Registry with state tracking
 - **workload-mcp.tf**: Cloud Run service and Artifact Registry
   - Cloud Run: CPU 1, Memory 512Mi, max 3 instances, 2 concurrent requests
   - Artifact Registry: Docker repository for container images
   - Health check probes configured
+  - References Terraform-managed Docker image for proper dependency tracking
 - **secrets.tf**: Secret Manager secrets for OAuth and Gemini API key
   - Secrets created with placeholder values (update manually)
   - IAM bindings for Cloud Run service account access
@@ -306,23 +311,29 @@ make init-deploy        # Creates GCS bucket, service account, enables APIs
 # - scmstt-oauth-creds
 # - scmstt-gemini-api-key
 
-# 3. Deploy application infrastructure
-make plan               # Review Cloud Run, Artifact Registry, secrets
-make deploy             # Creates all application resources
+# 3. Configure Docker authentication (one-time per machine)
+make docker-auth        # Configure gcloud for Artifact Registry
 
-# 4. Build and push Docker image
-make docker-build       # Build container image (~20MB)
-make docker-push        # Push to Artifact Registry
-
-# 5. Full Cloud Run deployment
-make cloud-run-deploy   # Build + push + deploy to Cloud Run
+# 4. Deploy everything (infrastructure + Docker build + push + Cloud Run)
+make plan               # Review all changes (including Docker image)
+make deploy             # Creates all resources, builds/pushes Docker image
 ```
 
 **Subsequent deployments:**
 
 ```bash
-make docker-build && make cloud-run-deploy
+# Single command deploys everything
+# Docker image auto-rebuilds only when source files change
+make deploy
 ```
+
+**Docker build triggers (auto-rebuild):**
+- `Dockerfile`
+- `go.mod`, `go.sum`
+- `cmd/speech-to-text/main.go`
+- `internal/processor/processor.go`
+- `internal/mcp/server.go`, `internal/mcp/oauth2.go`
+- `pkg/auth/auth.go`
 
 ### Terraform Commands
 
@@ -352,6 +363,7 @@ terraform apply
 - Auth tests: `pkg/auth/auth_test.go`
 - Init Terraform: `init/*.tf`
 - IAC Terraform: `iac/*.tf`
+- Docker build: `iac/docker.tf`
 - Infrastructure config: `config.yaml`
 - Dependencies: `go.mod`
 - Build: `Makefile`

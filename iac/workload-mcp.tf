@@ -26,7 +26,8 @@ resource "google_cloud_run_v2_service" "mcp_server" {
     max_instance_request_concurrency = local.cloud_run_config.max_concurrent_requests
 
     containers {
-      image = "${local.location}-docker.pkg.dev/${local.project_id}/${google_artifact_registry_repository.docker.repository_id}/${local.cloud_run_config.name}:latest"
+      # Reference Terraform-managed Docker image for proper dependency tracking
+      image = docker_registry_image.mcp_server.name
 
       resources {
         limits = {
@@ -105,7 +106,7 @@ resource "google_cloud_run_v2_service" "mcp_server" {
   labels = local.common_labels
 
   depends_on = [
-    google_artifact_registry_repository.docker,
+    docker_registry_image.mcp_server,
     google_secret_manager_secret_version.gemini_api_key,
     google_secret_manager_secret_version.oauth_credentials
   ]
