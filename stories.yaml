@@ -315,7 +315,7 @@
   - config.yaml is valid YAML
   - All required fields are present
   - Project ID matches google-contacts project
-  passes: false
+  passes: true
 - id: US-00008
   title: Update Makefile with Terraform and Docker targets
   priority: 8
