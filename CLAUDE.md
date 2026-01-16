@@ -26,16 +26,16 @@
 
 ### MCP Server Mode (Cloud Run)
 ```
-┌────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  MCP Client    │────▶│  OAuth2 Server   │────▶│  MCP Server     │
-│  (Claude Code) │     │  - RFC 9728/8414 │     │  - ping tool    │
-└────────────────┘     │  - PKCE support  │     │  - (transcribe) │
-                       └──────────────────┘     └────────┬────────┘
-                                                         │
-                                                         ▼
-                                                ┌────────────────┐
-                                                │ Gemini API     │
-                                                └────────────────┘
+┌────────────────┐     ┌──────────────────┐     ┌─────────────────────┐
+│  MCP Client    │────▶│  OAuth2 Server   │────▶│  MCP Server         │
+│  (Claude Code) │     │  - RFC 9728/8414 │     │  - ping tool        │
+└────────────────┘     │  - PKCE support  │     │  - transcribe_audio │
+                       └──────────────────┘     └──────────┬──────────┘
+                                                           │
+                                                           ▼
+                                                  ┌────────────────┐
+                                                  │ Gemini API     │
+                                                  └────────────────┘
 ```
 
 ## Technology Stack
@@ -108,12 +108,21 @@ speech-to-text/
 
 ### MCP Package (internal/mcp/)
 
-- **server.go**: MCP server structure
+- **server.go**: MCP server structure and tools
   - `Config`: Host, Port, BaseURL, credential configuration
   - `Server`: Wraps MCP server with HTTP and OAuth2
   - `NewServer()`: Creates server with MCP SDK
   - `Run()`: Starts HTTP server with graceful shutdown
+  - `RegisterTools()`: Registers MCP tools (ping, transcribe_audio)
   - `authMiddleware()`: Bearer token validation middleware
+  - `handleTranscribeAudio()`: Audio transcription handler
+  - `mimeTypeToExtension()`: MIME type to file extension mapping
+
+- **MCP Tools**:
+  - `ping`: Test connectivity with the MCP server
+  - `transcribe_audio`: Transcribe audio to meeting minutes
+    - Input: `audioData` (base64), `audioFormat` (MIME type), `meetingName`, `context`, `instructions`
+    - Output: `minutes` (markdown formatted meeting minutes)
 
 - **oauth2.go**: OAuth2 authorization server (RFC 2.1)
   - `OAuth2Server`: Handles OAuth2 flow

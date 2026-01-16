@@ -123,6 +123,38 @@ API Options:
                          └────────────────────────────────┘
 ```
 
+## MCP Server
+
+The speech-to-text tool also includes an MCP (Model Context Protocol) server for remote audio transcription, enabling AI assistants like Claude to transcribe audio files.
+
+### Available MCP Tools
+
+#### `ping`
+Test connectivity with the MCP server.
+
+#### `transcribe_audio`
+Transcribe audio recording to structured meeting minutes in markdown format.
+
+**Input Parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `audioData` | Yes | Base64-encoded audio file content |
+| `audioFormat` | Yes | MIME type of the audio (e.g., `audio/mp3`, `audio/wav`, `audio/m4a`) |
+| `meetingName` | No | Optional meeting title or name |
+| `context` | No | Optional additional context (participants, meeting type, etc.) |
+| `instructions` | No | Optional custom instructions for transcription processing |
+
+**Output:**
+- `minutes`: Formatted meeting minutes in markdown format
+
+### Authentication
+
+The MCP server uses OAuth2 with PKCE support (RFC 2.1) for authentication:
+- RFC 9728 Protected Resource Metadata
+- RFC 8414 Authorization Server Metadata
+- RFC 7591 Dynamic Client Registration
+- Bearer token authentication for MCP requests
+
 ## Project Structure
 
 ```
@@ -134,13 +166,15 @@ speech-to-text/
 │   ├── audio/
 │   │   └── processor.go     # Audio utilities (MIME types)
 │   ├── mcp/
-│   │   ├── server.go        # MCP server structure
+│   │   ├── server.go        # MCP server + transcribe_audio tool
+│   │   ├── server_test.go   # MCP server tests
 │   │   └── oauth2.go        # OAuth2 authorization server
 │   └── processor/
 │       └── processor.go     # Gemini processing
 ├── pkg/
 │   └── auth/
-│       └── auth.go          # API key injection via context
+│       ├── auth.go          # API key injection via context
+│       └── auth_test.go     # Auth package tests
 ├── bin/                     # Compiled binaries
 ├── go.mod                   # Go module definition
 ├── Makefile                 # Build automation
