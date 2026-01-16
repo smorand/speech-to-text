@@ -455,7 +455,7 @@
   - Service account is created
   - APIs are enabled
   - make update-backend generates iac/provider.tf
-  passes: false
+  passes: true
 - id: US-00013
   title: Deploy application with make deploy
   priority: 13
