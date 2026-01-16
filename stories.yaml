@@ -1,0 +1,472 @@
+- id: US-00001
+  title: Create MCP server foundation with OAuth2 authorization
+  priority: 1
+  description: 'Create the MCP server structure with OAuth2 authorization server pattern.
+
+    Based on google-contacts implementation but independent (no shared dependencies).
+
+
+    The server must:
+
+    - Implement RFC 2.1 OAuth2 with PKCE support
+
+    - Provide well-known endpoints for discovery
+
+    - Handle dynamic client registration
+
+    - Use Bearer token authentication for MCP requests
+
+    - Store tokens in memory with expiration cleanup
+
+
+    Files to create:
+
+    - internal/mcp/server.go (main server structure)
+
+    - internal/mcp/oauth2.go (OAuth2 authorization server)
+
+
+    Acceptance criteria:
+
+    - OAuth2 flow works end-to-end
+
+    - MCP server starts and responds to ping
+
+    - Bearer token validation protects MCP endpoints
+
+    '
+  tests:
+  - OAuth2 well-known endpoints return valid metadata
+  - Dynamic client registration returns client credentials
+  - Authorization flow redirects to callback with code
+  - Token exchange returns valid access token
+  - MCP endpoint rejects requests without valid Bearer token
+  passes: true
+- id: US-00002
+  title: Implement Gemini API key injection via context
+  priority: 2
+  description: 'Create authentication package to handle Gemini API key injection.
+
+    Pattern: context injection similar to google-contacts auth package.
+
+
+    The auth package must:
+
+    - Define context keys for API key injection
+
+    - Provide WithAPIKey(ctx, key) function
+
+    - Provide GetAPIKey(ctx) function with fallback to env var
+
+    - Cache the API key after first load from Secret Manager
+
+
+    For local development:
+
+    - Read from GEMINI_API_KEY env var
+
+    - Fallback to ~/.credentials/google_claude_np_api_key
+
+
+    For Cloud Run:
+
+    - Load from Secret Manager on startup
+
+    - Cache in memory for subsequent requests
+
+    - Inject via context for each request
+
+
+    Files to create:
+
+    - pkg/auth/auth.go
+
+    '
+  tests:
+  - WithAPIKey injects key into context
+  - GetAPIKey retrieves key from context
+  - GetAPIKey falls back to env var when no context
+  - API key is cached after first Secret Manager load
+  passes: false
+- id: US-00003
+  title: Implement transcription MCP tool
+  priority: 3
+  description: 'Create the single MCP tool for audio transcription.
+
+
+    Tool specification:
+
+    - Name: transcribe_audio
+
+    - Input: base64-encoded audio data + optional context fields
+
+    - Output: plain markdown meeting minutes
+
+
+    Input schema:
+
+    - audioData (required): base64-encoded audio file
+
+    - audioFormat (required): mime type (audio/mp3, audio/wav, etc.)
+
+    - meetingName (optional): meeting title
+
+    - context (optional): additional context (participants, etc.)
+
+    - instructions (optional): custom processing instructions
+
+
+    Processing flow:
+
+    1. Decode base64 audio data
+
+    2. Save to temporary file in /tmp
+
+    3. Call processor.Process() with audio file
+
+    4. Clean up temporary file
+
+    5. Return markdown result
+
+
+    Docstring must be clear for LLM usage:
+
+    "Transcribe audio recording to structured meeting minutes in markdown format.
+
+    Identifies speakers, preserves original language, formats as attendees list
+
+    followed by verbatim speaker-attributed transcript."
+
+    '
+  tests:
+  - Tool is registered with correct name and schema
+  - Base64 audio is correctly decoded and saved to temp file
+  - Processor is called with correct parameters
+  - Temporary file is cleaned up after processing
+  - Markdown output is returned in CallToolResult
+  - Optional parameters are passed to processor config
+  passes: false
+- id: US-00004
+  title: Add MCP subcommand to CLI
+  priority: 4
+  description: 'Modify cmd/speech-to-text/main.go to support ''mcp'' subcommand.
+
+
+    When running `speech-to-text mcp`:
+
+    - Print instructions for MCP server deployment
+
+    - Show Cloud Run URL format
+
+    - Show required environment variables
+
+    - Do NOT start local server
+
+
+    Behavior:
+
+    - If first argument is "mcp", show instructions and exit
+
+    - Otherwise, proceed with normal audio transcription
+
+
+    Instructions to display:
+
+    - How to deploy to Cloud Run
+
+    - Required secrets in Secret Manager
+
+    - Example Claude Code MCP configuration
+
+    '
+  tests:
+  - speech-to-text mcp prints deployment instructions
+  - speech-to-text mcp exits with code 0
+  - speech-to-text audio.mp3 still works as before
+  - No regression on existing CLI functionality
+  passes: false
+- id: US-00005
+  title: Create Terraform init infrastructure
+  priority: 5
+  description: 'Create init/ directory for one-time GCP setup.
+
+    Pattern based on google-contacts but independent.
+
+
+    Files to create:
+
+    - init/provider.tf (Google provider configuration)
+
+    - init/local.tf (load config.yaml)
+
+    - init/state-backend.tf (GCS bucket for tfstate)
+
+    - init/service-accounts.tf (Cloud Run service account)
+
+    - init/services.tf (enable required GCP APIs)
+
+
+    Required GCP services:
+
+    - run.googleapis.com
+
+    - secretmanager.googleapis.com
+
+    - artifactregistry.googleapis.com
+
+
+    Service account roles:
+
+    - Secret Manager Secret Accessor
+
+    '
+  tests:
+  - terraform validate passes in init/
+  - State backend bucket is created
+  - Service account is created with correct roles
+  - Required APIs are enabled
+  passes: false
+- id: US-00006
+  title: Create Terraform IAC infrastructure
+  priority: 6
+  description: 'Create iac/ directory for application infrastructure.
+
+
+    Files to create:
+
+    - iac/provider.tf.template (with BACKEND_PLACEHOLDER)
+
+    - iac/local.tf (load config.yaml)
+
+    - iac/workload-mcp.tf (Cloud Run + Artifact Registry)
+
+    - iac/secrets.tf (Secret Manager for API keys)
+
+
+    Cloud Run configuration:
+
+    - Memory: 512Mi (for audio file handling)
+
+    - CPU: 1
+
+    - Min instances: 0
+
+    - Max instances: 3
+
+    - Max concurrent requests: 2
+
+    - Temp storage: sufficient for audio files
+
+
+    Secrets:
+
+    - OAuth2 credentials
+
+    - Gemini API key
+
+
+    Environment variables for Cloud Run:
+
+    - HOST, PORT, BASE_URL
+
+    - PROJECT_ID, ENVIRONMENT
+
+    - GEMINI_API_KEY_SECRET (secret reference)
+
+    - OAUTH_CREDENTIALS_SECRET (secret reference)
+
+    '
+  tests:
+  - terraform validate passes in iac/
+  - Cloud Run service is configured with correct resources
+  - Artifact Registry repository is created
+  - Secrets are created in Secret Manager
+  - Service account has access to secrets
+  passes: false
+- id: US-00007
+  title: Create config.yaml for deployment
+  priority: 7
+  description: 'Create config.yaml as single source of truth for infrastructure.
+
+    Use same GCP project as google-contacts.
+
+
+    Configuration structure:
+
+    - prefix: scmstt
+
+    - project_name: speech-to-text
+
+    - env: prd
+
+    - gcp.project_id: (from google-contacts)
+
+    - gcp.location: europe-west1
+
+    - gcp.resources.cloud_run: memory 512Mi, cpu 1, max_concurrent 2
+
+    - secrets: oauth_credentials, gemini_api_key
+
+
+    Extract project_id from google-contacts config.yaml.
+
+    '
+  tests:
+  - config.yaml is valid YAML
+  - All required fields are present
+  - Project ID matches google-contacts project
+  passes: false
+- id: US-00008
+  title: Update Makefile with Terraform and Docker targets
+  priority: 8
+  description: 'Add Makefile targets for infrastructure deployment.
+
+    Pattern based on google-contacts Makefile.
+
+
+    New targets:
+
+    - init-plan: terraform plan for init/
+
+    - init-deploy: terraform apply for init/
+
+    - init-destroy: terraform destroy for init/
+
+    - update-backend: generate iac/provider.tf from template
+
+    - plan: terraform plan for iac/
+
+    - deploy: terraform apply for iac/
+
+    - undeploy: terraform destroy for iac/
+
+    - docker-build: build Docker image
+
+    - docker-push: push to Artifact Registry
+
+    - cloud-run-deploy: full deployment pipeline
+
+
+    Extract GCP_PROJECT and GCP_REGION from config.yaml.
+
+    '
+  tests:
+  - make init-plan runs without error
+  - make plan runs without error (after init-deploy)
+  - make docker-build creates image
+  - make docker-push pushes to Artifact Registry
+  passes: false
+- id: US-00009
+  title: Create Dockerfile for Cloud Run
+  priority: 9
+  description: 'Create Dockerfile for MCP server deployment.
+
+
+    Requirements:
+
+    - Multi-stage build for small image
+
+    - Go 1.21+ base image
+
+    - Non-root user for security
+
+    - Expose port 8080
+
+    - Health check endpoint
+
+
+    Build the binary with:
+
+    - CGO_ENABLED=0
+
+    - Static linking
+
+    - Linux target
+
+    '
+  tests:
+  - docker build succeeds
+  - Image runs and responds to health check
+  - Image size is reasonable (<50MB)
+  passes: false
+- id: US-00010
+  title: Update README.md with MCP documentation
+  priority: 10
+  description: 'Add MCP server documentation to README.md.
+
+
+    Sections to add:
+
+    - MCP Server Overview
+
+    - Deployment instructions
+
+    - Claude Code configuration example
+
+    - Available tools (transcribe_audio)
+
+    - Authentication flow
+
+    - Environment variables
+
+    '
+  tests:
+  - README.md contains MCP section
+  - Deployment steps are documented
+  - Tool schema is documented
+  - Example configuration is provided
+  passes: false
+- id: US-00011
+  title: Update CLAUDE.md with MCP architecture
+  priority: 11
+  description: 'Update CLAUDE.md with MCP implementation details.
+
+
+    Sections to update/add:
+
+    - Architecture diagram (add MCP flow)
+
+    - Project structure (new files)
+
+    - MCP server components
+
+    - Terraform infrastructure overview
+
+    - Deployment commands
+
+    '
+  tests:
+  - CLAUDE.md reflects new architecture
+  - New files are documented
+  - Infrastructure section exists
+  passes: false
+- id: US-00012
+  title: Deploy infrastructure with init-deploy
+  priority: 12
+  description: "Run make init-deploy to create base infrastructure.\n\nSteps:\n1.\
+    \ Run make init-plan to review\n2. Run make init-deploy to create:\n   - GCS state\
+    \ bucket\n   - Service account\n   - Enable APIs\n3. Run make update-backend to\
+    \ generate provider.tf\n\nPre-requisite: Upload secrets to Secret Manager\n- OAuth\
+    \ credentials from ~/.credentials/google_credentials.json\n- Gemini API key from\
+    \ ~/.credentials/google_claude_np_api_key\n"
+  tests:
+  - make init-deploy completes successfully
+  - State bucket exists in GCS
+  - Service account is created
+  - APIs are enabled
+  - make update-backend generates iac/provider.tf
+  passes: false
+- id: US-00013
+  title: Deploy application with make deploy
+  priority: 13
+  description: "Deploy full application infrastructure.\n\nSteps:\n1. Build and push\
+    \ Docker image\n2. Run make plan to review\n3. Run make deploy to create:\n  \
+    \ - Artifact Registry\n   - Cloud Run service\n   - Secret Manager secrets\n4.\
+    \ Verify deployment with health check\n"
+  tests:
+  - make deploy completes successfully
+  - Cloud Run service is running
+  - Health endpoint responds
+  - MCP endpoint is accessible (with auth)
+  passes: false
+
