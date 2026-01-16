@@ -1,0 +1,90 @@
+# Speech-to-Text MCP - Infrastructure Configuration
+# Single source of truth for terraform (init and iac folders)
+
+# ============================================
+# GLOBAL CONFIGURATION
+# ============================================
+
+# Project prefix (used for resource naming)
+prefix: scmstt
+
+# Project name
+project_name: speech-to-text-mcp
+
+# Environment: dev, stg, uat, prd
+env: prd
+
+# Human-readable project description
+description: Speech-to-Text MCP Server - Audio transcription for meeting minutes
+
+# ============================================
+# CLOUD PROVIDER CONFIGURATION
+# ============================================
+
+providers:
+  - gcp
+
+# ============================================
+# GCP CONFIGURATION
+# ============================================
+gcp:
+  # GCP Project ID - Same as google-contacts
+  project_id: project-3335b451-2ffb-4ece-8cd
+
+  # Location
+  location: europe-west1
+
+  # APIs/Services to enable on the project
+  services:
+    - run.googleapis.com
+    - secretmanager.googleapis.com
+    - artifactregistry.googleapis.com
+    - cloudresourcemanager.googleapis.com
+    - iam.googleapis.com
+
+  # GCP-specific resource configuration
+  resources:
+    # Cloud Run configuration
+    cloud_run:
+      name: speech-to-text-mcp
+      region: europe-west1
+      cpu: "1"
+      memory: 512Mi
+      min_instances: 0
+      max_instances: 3
+      max_concurrent_requests: 2
+      allow_unauthenticated: true
+
+    # Artifact Registry configuration
+    artifact_registry:
+      name: speech-to-text
+      format: DOCKER
+
+  # GCP-specific parameters
+  parameters:
+    log_retention_days: 30
+
+# ============================================
+# SECRETS CONFIGURATION
+# ============================================
+
+secrets:
+  # OAuth credentials secret name in Secret Manager
+  oauth_credentials: scmstt-oauth-creds
+  # Gemini API key secret name in Secret Manager
+  gemini_api_key: scmstt-gemini-api-key
+
+# ============================================
+# SHARED CONFIGURATION
+# ============================================
+
+# Default resource specifications
+resources:
+  cpu: "1"
+  memory: 512Mi
+  replicas: 1
+
+# Application parameters
+parameters:
+  log_level: info
+  default_port: 8080

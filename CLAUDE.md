@@ -71,7 +71,14 @@ speech-to-text/
 │   └── auth/
 │       ├── auth.go          # API key context injection
 │       └── auth_test.go     # Auth package tests
+├── init/                    # Terraform init (one-time setup)
+│   ├── provider.tf          # Google provider configuration
+│   ├── local.tf             # Load config.yaml
+│   ├── state-backend.tf     # GCS bucket for tfstate
+│   ├── service-accounts.tf  # Cloud Run service account
+│   └── services.tf          # Enable required GCP APIs
 ├── bin/                     # Compiled binaries (gitignored)
+├── config.yaml              # Infrastructure configuration
 ├── go.mod                   # Go module definition
 ├── go.sum                   # Dependency checksums
 ├── Makefile                 # Build automation
@@ -226,6 +233,52 @@ bin/speech-to-text audio.mp3 -o minutes.md \
 1. Update `GetMimeType()` in `internal/audio/processor.go`
 2. Add MIME type mapping
 3. Update README.md
+
+## Infrastructure
+
+### Terraform Structure
+
+Infrastructure is managed with Terraform in two directories:
+
+1. **init/**: One-time setup (state bucket, service accounts, APIs)
+2. **iac/**: Application infrastructure (Cloud Run, secrets) - TBD
+
+### init/ Directory
+
+Creates foundational GCP resources:
+- **state-backend.tf**: GCS bucket for Terraform state (`{project_id}-tfstate`)
+- **service-accounts.tf**: Cloud Run service account with Secret Manager access
+- **services.tf**: Enables required GCP APIs:
+  - `run.googleapis.com`
+  - `secretmanager.googleapis.com`
+  - `artifactregistry.googleapis.com`
+  - `cloudresourcemanager.googleapis.com`
+  - `iam.googleapis.com`
+
+### config.yaml
+
+Single source of truth for infrastructure configuration:
+- `prefix`: Resource naming prefix (`scmstt`)
+- `gcp.project_id`: GCP project ID
+- `gcp.location`: Region (`europe-west1`)
+- `gcp.services`: APIs to enable
+- `secrets`: Secret names for OAuth and Gemini API key
+
+### Terraform Commands
+
+```bash
+# Initialize terraform in init/
+cd init && terraform init
+
+# Validate configuration
+terraform validate
+
+# Plan changes
+terraform plan
+
+# Apply changes
+terraform apply
+```
 
 ## File References
 

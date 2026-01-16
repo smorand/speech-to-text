@@ -36,3 +36,22 @@ Thumbs.db
 *.md
 !README.md
 !CLAUDE.md
+!.agent_docs/*.md
+!TODO.md
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.auto.tfvars
+*.auto.tfvars.json
+
+# Generated files
+iac/provider.tf

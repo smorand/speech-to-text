@@ -175,13 +175,55 @@ speech-to-text/
 │   └── auth/
 │       ├── auth.go          # API key injection via context
 │       └── auth_test.go     # Auth package tests
+├── init/                    # Terraform init (one-time setup)
+│   ├── provider.tf          # Google provider configuration
+│   ├── local.tf             # Load config.yaml
+│   ├── state-backend.tf     # GCS bucket for tfstate
+│   ├── service-accounts.tf  # Cloud Run service account
+│   └── services.tf          # Enable required GCP APIs
 ├── bin/                     # Compiled binaries
+├── config.yaml              # Infrastructure configuration
 ├── go.mod                   # Go module definition
 ├── Makefile                 # Build automation
 ├── README.md                # This file
 ├── CLAUDE.md                # AI interaction guidelines
 └── .env                     # Local configuration (gitignored)
 ```
+
+## Infrastructure
+
+The MCP server is designed to be deployed on Google Cloud Run. Infrastructure is managed with Terraform.
+
+### Configuration
+
+Infrastructure configuration is defined in `config.yaml`:
+
+```yaml
+prefix: scmstt                              # Resource naming prefix
+gcp:
+  project_id: your-project-id               # GCP project ID
+  location: europe-west1                    # GCP region
+  services:                                 # APIs to enable
+    - run.googleapis.com
+    - secretmanager.googleapis.com
+    - artifactregistry.googleapis.com
+```
+
+### Terraform Init (One-Time Setup)
+
+The `init/` directory creates foundational resources:
+
+```bash
+cd init
+terraform init
+terraform plan
+terraform apply
+```
+
+This creates:
+- GCS bucket for Terraform state
+- Cloud Run service account with Secret Manager access
+- Enables required GCP APIs
 
 ## API Key Management
 

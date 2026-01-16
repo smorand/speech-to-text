@@ -225,7 +225,7 @@
   - State backend bucket is created
   - Service account is created with correct roles
   - Required APIs are enabled
-  passes: false
+  passes: true
 - id: US-00006
   title: Create Terraform IAC infrastructure
   priority: 6
