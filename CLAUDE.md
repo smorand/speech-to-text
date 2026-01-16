@@ -9,6 +9,7 @@
 
 ## Architecture
 
+### CLI Mode
 ```
 ┌──────────────────┐     ┌────────────────────────────────┐
 │  Audio File      │────▶│  Gemini Processing             │
@@ -23,6 +24,20 @@
                          └────────────────────────────────┘
 ```
 
+### MCP Server Mode (Cloud Run)
+```
+┌────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  MCP Client    │────▶│  OAuth2 Server   │────▶│  MCP Server     │
+│  (Claude Code) │     │  - RFC 9728/8414 │     │  - ping tool    │
+└────────────────┘     │  - PKCE support  │     │  - (transcribe) │
+                       └──────────────────┘     └────────┬────────┘
+                                                         │
+                                                         ▼
+                                                ┌────────────────┐
+                                                │ Gemini API     │
+                                                └────────────────┘
+```
+
 ## Technology Stack
 
 - **Language**: Go 1.21+
@@ -30,8 +45,11 @@
 - **Main Dependencies**:
   - `google.golang.org/genai` - Gemini SDK for Go
   - `github.com/joho/godotenv` - Environment configuration
+  - `github.com/modelcontextprotocol/go-sdk/mcp` - MCP server SDK
+  - `cloud.google.com/go/secretmanager` - Secret Manager client
 - **External Services**:
   - Google Gemini API or Vertex AI (required)
+  - Google Secret Manager (for Cloud Run deployment)
 
 ## Project Structure
 
@@ -43,6 +61,10 @@ speech-to-text/
 ├── internal/
 │   ├── audio/
 │   │   └── processor.go     # Audio utilities (MIME types)
+│   ├── mcp/
+│   │   ├── server.go        # MCP server structure
+│   │   ├── server_test.go   # MCP server tests
+│   │   └── oauth2.go        # OAuth2 authorization server
 │   └── processor/
 │       └── processor.go     # Gemini processing
 ├── bin/                     # Compiled binaries (gitignored)
@@ -51,6 +73,7 @@ speech-to-text/
 ├── Makefile                 # Build automation
 ├── README.md                # User documentation
 ├── CLAUDE.md                # This file
+├── .agent_docs/             # Detailed AI documentation
 ├── .env                     # Local configuration (gitignored)
 └── .env.example             # Example configuration
 ```
@@ -78,6 +101,22 @@ speech-to-text/
 
 - **Functions**:
   - `GetMimeType()`: Maps file extensions to MIME types
+
+### MCP Package (internal/mcp/)
+
+- **server.go**: MCP server structure
+  - `Config`: Host, Port, BaseURL, credential configuration
+  - `Server`: Wraps MCP server with HTTP and OAuth2
+  - `NewServer()`: Creates server with MCP SDK
+  - `Run()`: Starts HTTP server with graceful shutdown
+  - `authMiddleware()`: Bearer token validation middleware
+
+- **oauth2.go**: OAuth2 authorization server (RFC 2.1)
+  - `OAuth2Server`: Handles OAuth2 flow
+  - Well-known endpoints (RFC 9728, RFC 8414)
+  - Dynamic client registration (RFC 7591)
+  - PKCE support (S256)
+  - In-memory token store with expiration cleanup
 
 ## Environment Configuration
 
@@ -165,6 +204,9 @@ bin/speech-to-text audio.mp3 -o minutes.md \
 - CLI orchestration: `cmd/speech-to-text/main.go`
 - Gemini processing: `internal/processor/processor.go`
 - Audio handling: `internal/audio/processor.go`
+- MCP server: `internal/mcp/server.go`
+- OAuth2 server: `internal/mcp/oauth2.go`
+- MCP tests: `internal/mcp/server_test.go`
 - Dependencies: `go.mod`
 - Build: `Makefile`
 
