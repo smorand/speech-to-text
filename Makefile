@@ -40,6 +40,9 @@ BINARY_DARWIN_ARM=$(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64
 CURRENT_BINARY=$(BUILD_DIR)/$(BINARY_NAME)-$(CURRENT_PLATFORM)
 LAUNCHER_SCRIPT=$(BUILD_DIR)/$(BINARY_NAME).sh
 
+# Go source files (for rebuild detection)
+GO_SOURCES=$(shell find . -name '*.go' -not -path './vendor/*' 2>/dev/null)
+
 # Build for current platform only
 build: $(CURRENT_BINARY)
 
@@ -49,7 +52,7 @@ build-all: $(BINARY_LINUX) $(BINARY_DARWIN_INTEL) $(BINARY_DARWIN_ARM) $(LAUNCHE
 rebuild: clean-all build
 
 # Build targets for each platform
-$(BINARY_LINUX): $(GO_SUM_PATH)
+$(BINARY_LINUX): $(GO_SUM_PATH) $(GO_SOURCES)
 	@echo "Building $(BINARY_NAME) for Linux AMD64..."
 	@mkdir -p $(BUILD_DIR)
 ifeq ($(HAS_SRC_DIR),yes)
@@ -59,7 +62,7 @@ else
 endif
 	@echo "✓ Built: $(BINARY_LINUX)"
 
-$(BINARY_DARWIN_INTEL): $(GO_SUM_PATH)
+$(BINARY_DARWIN_INTEL): $(GO_SUM_PATH) $(GO_SOURCES)
 	@echo "Building $(BINARY_NAME) for macOS Intel (AMD64)..."
 	@mkdir -p $(BUILD_DIR)
 ifeq ($(HAS_SRC_DIR),yes)
@@ -69,13 +72,13 @@ else
 endif
 ifeq ($(GOOS),darwin)
 	@echo "Signing binary for macOS..."
-	@codesign -s - $(BINARY_DARWIN_INTEL)
+	@codesign -f -s - $(BINARY_DARWIN_INTEL)
 	@echo "✓ Built and signed: $(BINARY_DARWIN_INTEL)"
 else
 	@echo "✓ Built: $(BINARY_DARWIN_INTEL) (sign with codesign on macOS)"
 endif
 
-$(BINARY_DARWIN_ARM): $(GO_SUM_PATH)
+$(BINARY_DARWIN_ARM): $(GO_SUM_PATH) $(GO_SOURCES)
 	@echo "Building $(BINARY_NAME) for macOS Apple Silicon (ARM64)..."
 	@mkdir -p $(BUILD_DIR)
 ifeq ($(HAS_SRC_DIR),yes)
@@ -85,7 +88,7 @@ else
 endif
 ifeq ($(GOOS),darwin)
 	@echo "Signing binary for macOS..."
-	@codesign -s - $(BINARY_DARWIN_ARM)
+	@codesign -f -s - $(BINARY_DARWIN_ARM)
 	@echo "✓ Built and signed: $(BINARY_DARWIN_ARM)"
 else
 	@echo "✓ Built: $(BINARY_DARWIN_ARM) (sign with codesign on macOS)"
