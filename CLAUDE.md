@@ -199,6 +199,7 @@ Processing:
 
 Output:
   -o                 Output file path (default: <audio-file>_transcription.md)
+  -f                 Force transcription even if output file is newer than audio
 
 API:
   --timeout          API request timeout in seconds (default: 1200 / 20 minutes)

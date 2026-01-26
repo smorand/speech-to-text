@@ -48,6 +48,14 @@ func main() {
 		opts.output = baseWithoutExt + "_transcription.md"
 	}
 
+	// Check if transcription already exists and is newer than audio file
+	if !opts.force {
+		if shouldSkip, msg := checkExistingTranscription(audioFile, opts.output); shouldSkip {
+			fmt.Println(msg)
+			return
+		}
+	}
+
 	logStep("=== Processing: Transcription + Analysis (Gemini) ===")
 
 	proc, err := processor.New(ctx, opts.processor, logStep)
@@ -68,6 +76,7 @@ func main() {
 type options struct {
 	processor processor.Config
 	output    string
+	force     bool
 }
 
 // getEnvDefault returns environment variable value or default if not set
@@ -82,6 +91,33 @@ func getEnvDefault(key, defaultValue string) string {
 func logStep(message string) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	fmt.Fprintf(os.Stderr, "[%s] %s\n", timestamp, message)
+}
+
+// checkExistingTranscription checks if output file exists and is newer than audio file.
+// Returns true if transcription should be skipped, along with a message.
+func checkExistingTranscription(audioFile, outputFile string) (bool, string) {
+	outputInfo, err := os.Stat(outputFile)
+	if err != nil {
+		// Output file doesn't exist, proceed with transcription
+		return false, ""
+	}
+
+	audioInfo, err := os.Stat(audioFile)
+	if err != nil {
+		// Audio file doesn't exist (will fail later), don't skip
+		return false, ""
+	}
+
+	if outputInfo.ModTime().After(audioInfo.ModTime()) {
+		return true, fmt.Sprintf("Transcription already exists and is up-to-date: %s\nUse -f to force re-transcription.", outputFile)
+	}
+
+	return false, ""
+}
+
+// booleanFlags lists flags that don't take a value
+var booleanFlags = map[string]bool{
+	"-f": true,
 }
 
 // reorderArgs reorders os.Args so flags come before positional arguments.
@@ -101,8 +137,7 @@ func reorderArgs() {
 			flags = append(flags, arg)
 			// Check if this flag takes a value (not a boolean flag)
 			// Look ahead to see if next arg exists and doesn't start with '-'
-			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
-				// All remaining flags take values (no boolean flags left)
+			if !booleanFlags[arg] && i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
 				i++
 				flags = append(flags, args[i])
 			}
@@ -134,6 +169,7 @@ func parseFlags() options {
 
 		// Output options
 		output = flag.String("o", "", "Output file path (markdown format)")
+		force  = flag.Bool("f", false, "Force transcription even if output file is newer than audio")
 
 		// API options
 		timeout = flag.Int("timeout", 1200, "API request timeout in seconds (default: 20 minutes)")
@@ -175,6 +211,7 @@ func parseFlags() options {
 			RequestTimeout: *timeout,
 		},
 		output: *output,
+		force:  *force,
 	}
 }
 
