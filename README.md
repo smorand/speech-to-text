@@ -4,11 +4,13 @@ A Go-based audio transcription tool using Google Gemini for transcription and me
 
 ## Features
 
-- **Gemini Audio Processing**: Direct audio transcription with speaker identification
+- **Gemini Audio Processing**: Uses Files API + Streaming for reliable transcription
+- **Default Model**: `gemini-3-pro-preview` with 20-minute timeout
 - **Meeting Minutes**: Automatic formatting as structured markdown
 - **Custom Instructions**: Add context and instructions via CLI
 - **Multiple Audio Formats**: MP3, WAV, M4A, AAC, OGG, FLAC
 - **Single Binary**: Compiled Go binary with no dependencies
+- **VPN Detection**: Warns if connection issues may be VPN-related
 
 ## Prerequisites
 
@@ -84,10 +86,10 @@ Processing Options:
   -i string              Custom instructions for processing
 
 Output Options:
-  -o string              Output file path (markdown format)
+  -o string              Output file path (default: <audio-file>_transcription.md)
 
 API Options:
-  --timeout int          API request timeout in seconds (default: 600)
+  --timeout int          API request timeout in seconds (default: 1200 / 20 minutes)
 ```
 
 ## Output Format
@@ -112,15 +114,23 @@ API Options:
 
 ```
 ┌──────────────────┐     ┌────────────────────────────────┐
-│  Audio File      │────▶│  Gemini Processing             │
-│  (MP3/WAV/etc.)  │     │  - Full transcription          │
-└──────────────────┘     │  - Speaker identification      │
+│  Audio File      │────▶│  Files API Upload (4s)         │
+│  (MP3/WAV/etc.)  │     │  - Uploads audio to Gemini     │
+└──────────────────┘     │  - Returns file URI            │
+                         └──────────────┬─────────────────┘
+                                        │
+                                        ▼
+                         ┌────────────────────────────────┐
+                         │  Streaming Transcription       │
+                         │  - streamGenerateContent API   │
+                         │  - Speaker identification      │
                          │  - Meeting minutes formatting  │
                          └──────────────┬─────────────────┘
                                         │
                                         ▼
                          ┌────────────────────────────────┐
                          │  Output: Structured Minutes    │
+                         │  Auto cleanup uploaded file    │
                          └────────────────────────────────┘
 ```
 
@@ -456,14 +466,21 @@ key, err := auth.GetAPIKeyWithSecretManager(ctx, cfg)
 All progress logs are written to stderr with timestamps:
 
 ```
-[2025-01-10 14:23:45] === Processing: Transcription + Analysis (Gemini) ===
-[2025-01-10 14:23:45] Using Gemini API for processing (model: gemini-3-pro-preview)
-[2025-01-10 14:23:45] Processing audio with Gemini
-[2025-01-10 14:23:45] Sending audio (22.45 MB) to gemini-3-pro-preview...
-[2025-01-10 14:25:00] Processing completed
-[2025-01-10 14:25:00] Writing Meeting minutes to: minutes.md
-[2025-01-10 14:25:00] Successfully wrote 15.67 KB to minutes.md
-✓ Meeting minutes saved to: minutes.md
+[2026-01-26 13:08:52] === Processing: Transcription + Analysis (Gemini) ===
+[2026-01-26 13:08:52] Using Gemini API for processing (model: gemini-3-flash-preview)
+[2026-01-26 13:08:52] Processing audio with Gemini
+[2026-01-26 13:08:52] Audio file size: 18.84 MB
+[2026-01-26 13:08:52] Uploading file to Gemini Files API...
+[2026-01-26 13:08:56] File uploaded successfully: https://generativelanguage.googleapis.com/v1beta/files/xxx
+[2026-01-26 13:08:56] Waiting for file to be processed...
+[2026-01-26 13:08:56] File is ready for processing
+[2026-01-26 13:08:56] Transcribing with model: gemini-3-flash-preview
+[2026-01-26 13:08:56] Sending streaming request...
+[2026-01-26 13:10:17] Processing completed
+[2026-01-26 13:10:19] Cleaned up uploaded file
+[2026-01-26 13:10:19] Writing Meeting minutes to: /path/to/audio_transcription.md
+[2026-01-26 13:10:19] Successfully wrote 25.57 KB to /path/to/audio_transcription.md
+✓ Meeting minutes saved to: /path/to/audio_transcription.md
 ```
 
 ## Supported Audio Formats
@@ -476,6 +493,23 @@ All progress logs are written to stderr with timestamps:
 - FLAC (`.flac`)
 
 ## Troubleshooting
+
+### Connection Closed Unexpectedly (EOF)
+
+**Error:** `connection closed unexpectedly (EOF) - Are you sure you don't have an active VPN?`
+
+**Root Cause:** VPNs can interfere with long-running HTTP connections.
+
+**Solutions:**
+- Pause or disable your VPN temporarily
+- Retry the transcription without VPN active
+- Check your VPN timeout settings
+
+**Why This Happens:**
+- Files API upload succeeds quickly (~4 seconds)
+- Streaming transcription can take 60+ seconds
+- Some VPNs have aggressive connection timeouts (60-65 seconds)
+- This causes premature connection termination
 
 ### Gemini API Errors
 

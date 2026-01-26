@@ -1,12 +1,12 @@
 module speech-to-text
 
-go 1.24.4
+go 1.25.6
 
 require (
 	cloud.google.com/go/secretmanager v1.16.0
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.2.0
-	google.golang.org/genai v1.42.0
+	google.golang.org/genai v1.43.0
 )
 
 require (
