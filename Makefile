@@ -67,7 +67,13 @@ ifeq ($(HAS_SRC_DIR),yes)
 else
 	@GOOS=darwin GOARCH=amd64 go build -o $(BINARY_DARWIN_INTEL) $(CMD_PATH)
 endif
-	@echo "✓ Built: $(BINARY_DARWIN_INTEL)"
+ifeq ($(GOOS),darwin)
+	@echo "Signing binary for macOS..."
+	@codesign -s - $(BINARY_DARWIN_INTEL)
+	@echo "✓ Built and signed: $(BINARY_DARWIN_INTEL)"
+else
+	@echo "✓ Built: $(BINARY_DARWIN_INTEL) (sign with codesign on macOS)"
+endif
 
 $(BINARY_DARWIN_ARM): $(GO_SUM_PATH)
 	@echo "Building $(BINARY_NAME) for macOS Apple Silicon (ARM64)..."
@@ -77,7 +83,13 @@ ifeq ($(HAS_SRC_DIR),yes)
 else
 	@GOOS=darwin GOARCH=arm64 go build -o $(BINARY_DARWIN_ARM) $(CMD_PATH)
 endif
-	@echo "✓ Built: $(BINARY_DARWIN_ARM)"
+ifeq ($(GOOS),darwin)
+	@echo "Signing binary for macOS..."
+	@codesign -s - $(BINARY_DARWIN_ARM)
+	@echo "✓ Built and signed: $(BINARY_DARWIN_ARM)"
+else
+	@echo "✓ Built: $(BINARY_DARWIN_ARM) (sign with codesign on macOS)"
+endif
 
 # Create launcher script
 $(LAUNCHER_SCRIPT): $(BINARY_LINUX) $(BINARY_DARWIN_INTEL) $(BINARY_DARWIN_ARM)
