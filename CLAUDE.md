@@ -113,12 +113,19 @@ speech-to-text/
 ### Processor Package (internal/processor/processor.go)
 
 - **Purpose**: Gemini audio processing for transcription
+- **Default Model**: `gemini-3-pro-preview`
+- **Default Timeout**: 1200 seconds (20 minutes)
+- **Processing Method**:
+  - Uses **Files API** to upload audio (avoids inline data timeout issues)
+  - Uses **Streaming API** (`GenerateContentStream`) for transcription
+  - Automatically cleans up uploaded files after processing
 - **Config Struct**: Gemini API key, model, context, instructions
 - **Key Methods**:
   - `New()`: Creates Gemini client (API or Vertex AI)
-  - `Process(ctx, audioFile)`: Main entry point, sends audio to Gemini
+  - `Process(ctx, audioFile)`: Main entry point, uploads file and streams transcription
   - `buildSystemPrompt()`: Constructs system instructions
   - `buildUserPrompt()`: Adds context and instructions
+- **VPN Warning**: Shows helpful message if EOF errors occur (VPN interference)
 
 ### Audio Package (internal/audio/processor.go)
 
@@ -191,10 +198,10 @@ Processing:
   -i                 Custom instructions for processing
 
 Output:
-  -o                 Output file path
+  -o                 Output file path (default: <audio-file>_transcription.md)
 
 API:
-  --timeout          API request timeout in seconds (default: 600)
+  --timeout          API request timeout in seconds (default: 1200 / 20 minutes)
 ```
 
 ## Development Guidelines
@@ -211,6 +218,9 @@ API:
 
 1. **Check API Keys**: Verify GEMINI_API_KEY
 2. **Build Issues**: Run `go mod tidy`
+3. **EOF Errors**: Check if VPN is active - VPNs can cause connection timeouts during streaming
+   - Error message includes VPN warning: `"Are you sure you don't have an active VPN?"`
+   - Solution: Pause VPN temporarily during transcription
 
 ### Code Style
 
@@ -232,13 +242,17 @@ make docker-build       # Build Docker image locally (for testing)
 ### Testing
 
 ```bash
-# Basic transcription
+# Basic transcription (output to default file: audio_transcription.md)
+bin/speech-to-text audio.mp3
+
+# Specify output file
 bin/speech-to-text audio.mp3 -o minutes.md
 
-# With context
-bin/speech-to-text audio.mp3 -o minutes.md \
+# With context and model selection
+bin/speech-to-text audio.mp3 \
   --context "Meeting with Alice and Bob" \
-  -i "Focus on action items"
+  -i "Focus on action items" \
+  -model gemini-3-flash-preview
 ```
 
 ### Adding New Audio Format
@@ -378,12 +392,16 @@ make build
 
 ### Run
 ```bash
+# Output to default file (audio_transcription.md)
+bin/speech-to-text audio.mp3
+
+# Or specify output file
 bin/speech-to-text audio.mp3 -o minutes.md
 ```
 
 ### With Context
 ```bash
-bin/speech-to-text audio.mp3 -o minutes.md \
+bin/speech-to-text audio.mp3 \
   --context "Weekly standup" \
   -i "Extract action items"
 ```

@@ -51,7 +51,7 @@ func New(ctx context.Context, cfg Config, logFn func(string)) (*Processor, error
 		cfg.ModelName = "gemini-2.5-flash"
 	}
 	if cfg.RequestTimeout <= 0 {
-		cfg.RequestTimeout = 120
+		cfg.RequestTimeout = 1200 // 20 minutes default
 	}
 
 	timeout := time.Duration(cfg.RequestTimeout) * time.Second
@@ -113,10 +113,10 @@ func (p *Processor) Close() {
 func (p *Processor) Process(ctx context.Context, audioFile string) (string, error) {
 	p.log("Processing audio with Gemini")
 
-	// Read and encode audio file
-	audioData, err := os.ReadFile(audioFile)
+	// Get file info
+	fileInfo, err := os.Stat(audioFile)
 	if err != nil {
-		return "", fmt.Errorf("failed to read audio file: %w", err)
+		return "", fmt.Errorf("failed to stat audio file: %w", err)
 	}
 
 	// Get MIME type
@@ -126,24 +126,60 @@ func (p *Processor) Process(ctx context.Context, audioFile string) (string, erro
 		return "", fmt.Errorf("unsupported audio format: %s", ext)
 	}
 
-	p.log(fmt.Sprintf("Sending audio (%.2f MB) to %s...", float64(len(audioData))/(1024*1024), p.config.ModelName))
+	fileSizeMB := float64(fileInfo.Size()) / (1024 * 1024)
+	p.log(fmt.Sprintf("Audio file size: %.2f MB", fileSizeMB))
 
 	// Build prompts
 	systemPrompt := p.buildSystemPrompt()
 	userPrompt := p.buildUserPrompt()
 
-	// Build content parts: audio + text prompt
+	// Upload file to Files API first
+	p.log("Uploading file to Gemini Files API...")
+	uploadedFile, err := p.client.Files.UploadFromPath(ctx, audioFile, &genai.UploadFileConfig{
+		MIMEType:    mimeType,
+		DisplayName: filepath.Base(audioFile),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload file to Files API: %w", err)
+	}
+	p.log(fmt.Sprintf("File uploaded successfully: %s", uploadedFile.URI))
+
+	// Wait for file to be ACTIVE
+	p.log("Waiting for file to be processed...")
+	for uploadedFile.State == genai.FileStateProcessing {
+		time.Sleep(2 * time.Second)
+		uploadedFile, err = p.client.Files.Get(ctx, uploadedFile.Name, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to check file state: %w", err)
+		}
+	}
+
+	if uploadedFile.State != genai.FileStateActive {
+		return "", fmt.Errorf("uploaded file is not active (state: %s)", uploadedFile.State)
+	}
+	p.log("File is ready for processing")
+
+	// Clean up file after processing
+	defer func() {
+		if _, err := p.client.Files.Delete(ctx, uploadedFile.Name, nil); err != nil {
+			p.log(fmt.Sprintf("Warning: failed to delete uploaded file: %v", err))
+		} else {
+			p.log("Cleaned up uploaded file")
+		}
+	}()
+
+	// Use file URI with streaming API
 	parts := []*genai.Part{
-		{
-			InlineData: &genai.Blob{
-				MIMEType: mimeType,
-				Data:     audioData,
-			},
-		},
+		genai.NewPartFromURI(uploadedFile.URI, uploadedFile.MIMEType),
 		genai.NewPartFromText(userPrompt),
 	}
 
-	resp, err := p.client.Models.GenerateContent(ctx, p.config.ModelName,
+	p.log(fmt.Sprintf("Transcribing with model: %s", p.config.ModelName))
+	p.log("Sending streaming request...")
+
+	// Use streaming API instead of regular GenerateContent
+	var result strings.Builder
+	for resp, err := range p.client.Models.GenerateContentStream(ctx, p.config.ModelName,
 		[]*genai.Content{
 			{
 				Parts: parts,
@@ -156,20 +192,28 @@ func (p *Processor) Process(ctx context.Context, audioFile string) (string, erro
 				Role:  genai.RoleUser,
 			},
 		},
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to process audio: %w", err)
+	) {
+		if err != nil {
+			// Check for EOF error and provide VPN hint
+			if strings.Contains(err.Error(), "EOF") {
+				return "", fmt.Errorf("connection closed unexpectedly (EOF) - Are you sure you don't have an active VPN? VPNs can interfere with long-running requests. Original error: %w", err)
+			}
+			return "", fmt.Errorf("failed to process audio: %w", err)
+		}
+		// Accumulate text from streaming response
+		result.WriteString(extractTextFromResponse(resp))
 	}
 
-	result := extractTextFromResponse(resp)
+	// Convert builder to string
+	resultText := result.String()
 
 	// Add meeting title if configured
 	if p.config.MeetingName != "" {
-		result = p.addMeetingTitle(result)
+		resultText = p.addMeetingTitle(resultText)
 	}
 
 	p.log("Processing completed")
-	return result, nil
+	return resultText, nil
 }
 
 // buildSystemPrompt constructs the system instruction

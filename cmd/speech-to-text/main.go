@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -39,6 +40,13 @@ func main() {
 
 	ctx := context.Background()
 	audioFile := flag.Args()[0]
+
+	// Set default output file if not provided
+	if opts.output == "" {
+		// Remove extension and add _transcription.md
+		baseWithoutExt := audioFile[:len(audioFile)-len(filepath.Ext(audioFile))]
+		opts.output = baseWithoutExt + "_transcription.md"
+	}
 
 	logStep("=== Processing: Transcription + Analysis (Gemini) ===")
 
@@ -128,7 +136,7 @@ func parseFlags() options {
 		output = flag.String("o", "", "Output file path (markdown format)")
 
 		// API options
-		timeout = flag.Int("timeout", 600, "API request timeout in seconds")
+		timeout = flag.Int("timeout", 1200, "API request timeout in seconds (default: 20 minutes)")
 	)
 
 	flag.Parse()
