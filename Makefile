@@ -180,10 +180,18 @@ install: build
 ifndef TARGET
 	@echo "Installing $(BINARY_NAME) ($(CURRENT_PLATFORM)) to /usr/local/bin..."
 	@sudo cp $(CURRENT_BINARY) /usr/local/bin/$(BINARY_NAME)
+ifeq ($(GOOS),darwin)
+	@echo "Re-signing binary after install..."
+	@sudo codesign -f -s - /usr/local/bin/$(BINARY_NAME)
+endif
 	@echo "Installation complete!"
 else
 	@echo "Installing $(BINARY_NAME) ($(CURRENT_PLATFORM)) to $(TARGET)..."
 	@cp $(CURRENT_BINARY) $(TARGET)/$(BINARY_NAME) 2>/dev/null || sudo cp $(CURRENT_BINARY) $(TARGET)/$(BINARY_NAME)
+ifeq ($(GOOS),darwin)
+	@echo "Re-signing binary after install..."
+	@codesign -f -s - $(TARGET)/$(BINARY_NAME) 2>/dev/null || sudo codesign -f -s - $(TARGET)/$(BINARY_NAME)
+endif
 	@echo "Installation complete!"
 endif
 
@@ -197,6 +205,11 @@ ifndef TARGET
 	@sudo cp $(BINARY_LINUX) /usr/local/lib/$(BINARY_NAME)/
 	@sudo cp $(BINARY_DARWIN_INTEL) /usr/local/lib/$(BINARY_NAME)/
 	@sudo cp $(BINARY_DARWIN_ARM) /usr/local/lib/$(BINARY_NAME)/
+ifeq ($(GOOS),darwin)
+	@echo "Re-signing macOS binaries after install..."
+	@sudo codesign -f -s - /usr/local/lib/$(BINARY_NAME)/$(BINARY_NAME)-darwin-amd64
+	@sudo codesign -f -s - /usr/local/lib/$(BINARY_NAME)/$(BINARY_NAME)-darwin-arm64
+endif
 	@echo "Installation complete!"
 else
 	@echo "Installing launcher script to $(TARGET)/$(BINARY_NAME)..."
