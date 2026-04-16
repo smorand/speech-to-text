@@ -5,6 +5,7 @@ A Go-based audio transcription tool using Google Gemini for transcription and me
 ## Features
 
 - **Gemini Audio Processing**: Uses Files API + Streaming for reliable transcription
+- **OpenRouter Support**: Route through OpenRouter for access to any compatible model
 - **Default Model**: `gemini-3-pro-preview` with 20-minute timeout
 - **Meeting Minutes**: Automatic formatting as structured markdown
 - **Custom Instructions**: Add context and instructions via CLI
@@ -15,7 +16,7 @@ A Go-based audio transcription tool using Google Gemini for transcription and me
 ## Prerequisites
 
 - Go 1.24 or higher
-- Google Gemini API key (or Vertex AI access)
+- Google Gemini API key, Vertex AI access, or OpenRouter API key
 - Docker (for containerized deployment)
 
 ## Installation
@@ -32,13 +33,16 @@ make build
 Create a `.env` file:
 
 ```bash
-# Gemini API (Required)
+# Option 1: Gemini API (direct)
 GEMINI_API_KEY=your-gemini-api-key
 
-# Or use Vertex AI instead of Gemini API
+# Option 2: Vertex AI
 GEMINI_USE_VERTEX_AI=true
 GCP_PROJECT=your-gcp-project-id
 GCP_LOCATION=global
+
+# Option 3: OpenRouter (use with --model openrouter/<model>)
+OPENROUTER_API_KEY=your-openrouter-api-key
 ```
 
 ## Usage
@@ -48,6 +52,18 @@ GCP_LOCATION=global
 ```bash
 # Transcribe audio to meeting minutes
 bin/speech-to-text audio.mp3 -o minutes.md
+```
+
+### Using OpenRouter
+
+```bash
+# Use any model available on OpenRouter by prefixing with openrouter/
+bin/speech-to-text audio.mp3 -o minutes.md \
+  --model openrouter/google/gemini-3-pro-preview
+
+# With a different provider/model
+bin/speech-to-text audio.mp3 -o minutes.md \
+  --model openrouter/openai/gpt-4o-audio-preview
 ```
 
 ### With Context and Instructions
@@ -74,11 +90,13 @@ bin/speech-to-text audio.mp3 -o minutes.md \
 Positional Arguments:
   <audio-file>           Path to the audio file to transcribe (required)
 
-Gemini Processing:
-  --gemini-api-key string  Gemini API key (env: GEMINI_API_KEY)
-  --project string         GCP project ID for Vertex AI (env: GCP_PROJECT)
-  --location string        GCP location for Vertex AI (default: "global")
-  --model string           Gemini model name (default: "gemini-3-pro-preview")
+Model & Backend:
+  --model string             Model name (default: "gemini-3-pro-preview")
+                             Use openrouter/<model> for OpenRouter (e.g. openrouter/google/gemini-3-pro-preview)
+  --gemini-api-key string    Gemini API key (env: GEMINI_API_KEY)
+  --openrouter-api-key string OpenRouter API key (env: OPENROUTER_API_KEY)
+  --project string           GCP project ID for Vertex AI (env: GCP_PROJECT)
+  --location string          GCP location for Vertex AI (default: "global")
 
 Processing Options:
   -m string              Meeting name for the title
@@ -311,7 +329,8 @@ speech-to-text/
 │   │   ├── server_test.go   # MCP server tests
 │   │   └── oauth2.go        # OAuth2 authorization server
 │   └── processor/
-│       └── processor.go     # Gemini processing
+│       ├── processor.go     # Gemini processing
+│       └── openrouter.go    # OpenRouter processing
 ├── pkg/
 │   └── auth/
 │       ├── auth.go          # API key injection via context

@@ -67,7 +67,8 @@ speech-to-text/
 │   │   ├── server_test.go   # MCP server tests
 │   │   └── oauth2.go        # OAuth2 authorization server
 │   └── processor/
-│       └── processor.go     # Gemini processing
+│       ├── processor.go     # Gemini processing + backend dispatch
+│       └── openrouter.go    # OpenRouter processing (SSE streaming)
 ├── pkg/
 │   └── auth/
 │       ├── auth.go          # API key context injection
@@ -112,20 +113,32 @@ speech-to-text/
 
 ### Processor Package (internal/processor/processor.go)
 
-- **Purpose**: Gemini audio processing for transcription
+- **Purpose**: Audio processing for transcription (Gemini or OpenRouter)
 - **Default Model**: `gemini-3-pro-preview`
 - **Default Timeout**: 1200 seconds (20 minutes)
-- **Processing Method**:
-  - Uses **Files API** to upload audio (avoids inline data timeout issues)
-  - Uses **Streaming API** (`GenerateContentStream`) for transcription
-  - Automatically cleans up uploaded files after processing
-- **Config Struct**: Gemini API key, model, context, instructions
+- **Backends**:
+  - **Gemini API**: Files API upload + `GenerateContentStream`
+  - **Vertex AI**: Same as Gemini but via Vertex AI backend
+  - **OpenRouter**: Base64 inline audio + OpenAI-compatible SSE streaming
+- **Backend Selection**: Determined by `ModelName` prefix (`openrouter/` for OpenRouter, otherwise Gemini/Vertex AI)
+- **Config Struct**: Gemini API key, OpenRouter API key, model, context, instructions
 - **Key Methods**:
-  - `New()`: Creates Gemini client (API or Vertex AI)
-  - `Process(ctx, audioFile)`: Main entry point, uploads file and streams transcription
-  - `buildSystemPrompt()`: Constructs system instructions
-  - `buildUserPrompt()`: Adds context and instructions
+  - `New()`: Creates appropriate client based on model prefix
+  - `Process(ctx, audioFile)`: Dispatches to Gemini or OpenRouter path
+  - `buildSystemPrompt()`: Constructs system instructions (shared)
+  - `buildUserPrompt()`: Adds context and instructions (shared)
 - **VPN Warning**: Shows helpful message if EOF errors occur (VPN interference)
+
+### OpenRouter Backend (internal/processor/openrouter.go)
+
+- **Purpose**: Audio transcription via OpenRouter's OpenAI-compatible API
+- **API URL**: `https://openrouter.ai/api/v1/chat/completions`
+- **Audio Handling**: Base64 encoded inline (no file upload API)
+- **Streaming**: SSE (Server-Sent Events) parsing with `bufio.Scanner`
+- **Key Methods**:
+  - `processOpenRouter(ctx, audioFile)`: Reads file, encodes, builds request
+  - `streamOpenRouter(ctx, reqBody)`: HTTP POST with Bearer auth
+  - `parseSSEStream(body)`: Parses SSE `data:` lines, extracts `choices[].delta.content`
 
 ### Audio Package (internal/audio/processor.go)
 
@@ -175,22 +188,28 @@ speech-to-text/
 ## Environment Configuration
 
 ```bash
-# Gemini (Required)
-GEMINI_API_KEY=xxx       # Gemini API key
-# OR for Vertex AI:
+# Option 1: Gemini API (direct)
+GEMINI_API_KEY=xxx
+
+# Option 2: Vertex AI
 GEMINI_USE_VERTEX_AI=true
 GCP_PROJECT=xxx
 GCP_LOCATION=global
+
+# Option 3: OpenRouter (use with --model openrouter/<model>)
+OPENROUTER_API_KEY=xxx
 ```
 
 ## CLI Flags
 
 ```
-Gemini:
+Model & Backend:
+  --model            Model name (default: gemini-3-pro-preview)
+                     Use openrouter/<model> for OpenRouter
   --gemini-api-key   Gemini API key
+  --openrouter-api-key OpenRouter API key
   --project          GCP project (Vertex AI)
   --location         GCP location (Vertex AI)
-  --model            Gemini model name (default: gemini-3-pro-preview)
 
 Processing:
   -m                 Meeting name/title
@@ -370,6 +389,7 @@ terraform apply
 
 - CLI orchestration: `cmd/speech-to-text/main.go`
 - Gemini processing: `internal/processor/processor.go`
+- OpenRouter processing: `internal/processor/openrouter.go`
 - Audio handling: `internal/audio/processor.go`
 - MCP server: `internal/mcp/server.go`
 - OAuth2 server: `internal/mcp/oauth2.go`
@@ -405,6 +425,12 @@ bin/speech-to-text audio.mp3 -o minutes.md
 bin/speech-to-text audio.mp3 \
   --context "Weekly standup" \
   -i "Extract action items"
+```
+
+### Via OpenRouter
+```bash
+bin/speech-to-text audio.mp3 \
+  --model openrouter/google/gemini-3-pro-preview
 ```
 
 ## Documentation Index
