@@ -22,8 +22,11 @@ type Config struct {
 	Location    string // GCP location (for Vertex AI)
 	UseVertexAI bool   // Use Vertex AI backend
 
+	// OpenRouter configuration
+	OpenRouterAPIKey string // OpenRouter API key (when model starts with openrouter/)
+
 	// Model configuration
-	ModelName string // Gemini model name
+	ModelName string // Gemini model name (or openrouter/<model> for OpenRouter)
 
 	// Processing options
 	MeetingName  string // Meeting name/title
@@ -34,11 +37,14 @@ type Config struct {
 	RequestTimeout int // Request timeout in seconds (default: 120)
 }
 
-// Processor handles audio transcription and analysis using Gemini
+// Processor handles audio transcription and analysis using Gemini or OpenRouter
 type Processor struct {
-	client *genai.Client
-	config Config
-	logFn  func(string)
+	client          *genai.Client // Gemini SDK client (nil for OpenRouter)
+	httpClient      *http.Client  // HTTP client (used for OpenRouter)
+	config          Config
+	logFn           func(string)
+	useOpenRouter   bool
+	openRouterModel string // model ID after stripping "openrouter/" prefix
 }
 
 // New creates a new Processor instance
@@ -63,6 +69,24 @@ func New(ctx context.Context, cfg Config, logFn func(string)) (*Processor, error
 			IdleConnTimeout:     90 * time.Second,
 			TLSHandshakeTimeout: 30 * time.Second,
 		},
+	}
+
+	// OpenRouter backend: model starts with "openrouter/"
+	if strings.HasPrefix(cfg.ModelName, "openrouter/") {
+		openRouterModel := strings.TrimPrefix(cfg.ModelName, "openrouter/")
+		if cfg.OpenRouterAPIKey == "" {
+			return nil, fmt.Errorf("OPENROUTER_API_KEY is required when using openrouter/ models")
+		}
+		if logFn != nil {
+			logFn(fmt.Sprintf("Using OpenRouter for processing (model: %s)", openRouterModel))
+		}
+		return &Processor{
+			httpClient:      httpClient,
+			config:          cfg,
+			logFn:           logFn,
+			useOpenRouter:   true,
+			openRouterModel: openRouterModel,
+		}, nil
 	}
 
 	if cfg.UseVertexAI {
@@ -111,6 +135,10 @@ func (p *Processor) Close() {
 
 // Process takes an audio file and returns structured meeting minutes
 func (p *Processor) Process(ctx context.Context, audioFile string) (string, error) {
+	if p.useOpenRouter {
+		return p.processOpenRouter(ctx, audioFile)
+	}
+
 	p.log("Processing audio with Gemini")
 
 	// Get file info

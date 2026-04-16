@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	mcpserver "speech-to-text/internal/mcp"
@@ -160,7 +161,10 @@ func parseFlags() options {
 		geminiAPIKey = flag.String("gemini-api-key", os.Getenv("GEMINI_API_KEY"), "Gemini API key")
 		projectID    = flag.String("project", os.Getenv("GCP_PROJECT"), "GCP project ID (Vertex AI only)")
 		location     = flag.String("location", getEnvDefault("GCP_LOCATION", "global"), "GCP location (Vertex AI only)")
-		modelName    = flag.String("model", "gemini-3-pro-preview", "Gemini model name")
+		modelName    = flag.String("model", "gemini-3-pro-preview", "Model name (use openrouter/<model> for OpenRouter)")
+
+		// OpenRouter options
+		openRouterAPIKey = flag.String("openrouter-api-key", os.Getenv("OPENROUTER_API_KEY"), "OpenRouter API key")
 
 		// Processing options
 		meetingName  = flag.String("m", "", "Meeting name for the title")
@@ -200,15 +204,16 @@ func parseFlags() options {
 
 	return options{
 		processor: processor.Config{
-			APIKey:         *geminiAPIKey,
-			ProjectID:      *projectID,
-			Location:       *location,
-			UseVertexAI:    useVertexAI,
-			ModelName:      *modelName,
-			MeetingName:    *meetingName,
-			Context:        *ctxFlag,
-			Instructions:   *instructions,
-			RequestTimeout: *timeout,
+			APIKey:           *geminiAPIKey,
+			ProjectID:        *projectID,
+			Location:         *location,
+			UseVertexAI:      useVertexAI,
+			OpenRouterAPIKey: *openRouterAPIKey,
+			ModelName:        *modelName,
+			MeetingName:      *meetingName,
+			Context:          *ctxFlag,
+			Instructions:     *instructions,
+			RequestTimeout:   *timeout,
 		},
 		output: *output,
 		force:  *force,
@@ -217,6 +222,20 @@ func parseFlags() options {
 
 // validateConfig validates the configuration
 func validateConfig(opts options) error {
+	// OpenRouter models bypass Gemini/Vertex AI validation
+	if strings.HasPrefix(opts.processor.ModelName, "openrouter/") {
+		if opts.processor.OpenRouterAPIKey == "" {
+			return fmt.Errorf(`OpenRouter API key is required when using openrouter/ models.
+
+Please provide it via one of these methods:
+  1. Set OPENROUTER_API_KEY environment variable in .env file
+  2. Pass --openrouter-api-key flag
+
+Get your API key from: https://openrouter.ai/keys`)
+		}
+		return nil
+	}
+
 	if opts.processor.UseVertexAI {
 		if opts.processor.ProjectID == "" {
 			return fmt.Errorf(`Vertex AI backend requires a GCP project ID.
