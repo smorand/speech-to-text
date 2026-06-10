@@ -558,7 +558,7 @@ make clean        # Clean build artifacts
 ## Author
 
 **Sebastien MORAND**
-Email: sebastien.morand@*******
+Email: seb.morand@gmail.com
 
 ## License
 

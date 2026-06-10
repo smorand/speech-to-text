@@ -5,7 +5,7 @@
 **Project Name**: speech-to-text-go
 **Type**: Personal Go CLI Tool
 **Purpose**: Audio transcription using Google Gemini for meeting minutes generation
-**Owner**: Sebastien MORAND (sebastien.morand@*******)
+**Owner**: Sebastien MORAND (seb.morand@gmail.com)
 
 ## Architecture
 
